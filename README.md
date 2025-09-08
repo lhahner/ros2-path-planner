@@ -31,7 +31,6 @@ More clearly the requirements of the software are definied as follows:
 `cd ~/turtlebot3_ws`  
 `ros2 pkg create --build-type ament_python --node-name my_node my_package`  
   
----
 ## How to build a package
 `cd ~/turtlebot3_ws`  
 `colcon build --packages-select my_package`  
