@@ -30,6 +30,8 @@ More clearly the requirements of the software are definied as follows:
 ## How to create a package
 `cd ~/turtlebot3_ws`  
 `ros2 pkg create --build-type ament_python --node-name my_node my_package`  
+package is located at `turtlebot3_ws/src/my_package/`  
+code is located at `turtlebot3_ws/src/my_package/my_package/my_node.py`
   
 ## How to build a package
 `cd ~/turtlebot3_ws`  
