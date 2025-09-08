@@ -28,13 +28,13 @@ More clearly the requirements of the software are definied as follows:
 - The robot should generate a map of the room using path planning and the implemented SLAM module
 ---
 ## How to create a package
-`cd ~/turtlebot3_ws`
-`ros2 pkg create --build-type ament_python --license Apache-2.0 --node-name my_node my_package`
-
+`cd ~/turtlebot3_ws`  
+`ros2 pkg create --build-type ament_python --license Apache-2.0 --node-name my_node my_package`  
+  
 ---
 ## How to build a package
-`cd ~/turtlebot3_ws`
-`colcon build --packages-select my_package`
-
+`cd ~/turtlebot3_ws`  
+`colcon build --packages-select my_package`  
+  
 ## Run package
 `ros2 run my_package my_node`
