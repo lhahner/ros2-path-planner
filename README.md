@@ -29,7 +29,7 @@ More clearly the requirements of the software are definied as follows:
 ---
 ## How to create a package
 `cd ~/turtlebot3_ws`  
-`ros2 pkg create --build-type ament_python --license Apache-2.0 --node-name my_node my_package`  
+`ros2 pkg create --build-type ament_python --node-name my_node my_package`  
   
 ---
 ## How to build a package
