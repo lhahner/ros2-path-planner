@@ -1,6 +1,6 @@
 import math
 from typing import Optional
-
+from geometry_msgs.msg import PoseStamped
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
@@ -28,8 +28,8 @@ class NavigationExecutor(Node):
         self.declare_parameter('cmd_topic', '/cmd_vel')
         self.declare_parameter('target_frame', 'odom')       # or 'map'
         self.declare_parameter('base_frame', 'base_link')
-        self.declare_parameter('lookahead', 0.5)             # m
-        self.declare_parameter('goal_tolerance_xy', 0.15)    # m
+        self.declare_parameter('lookahead', 0.5)             
+        self.declare_parameter('goal_tolerance_xy', 0.15)    
         self.declare_parameter('goal_tolerance_yaw', 0.25)   # rad
         self.declare_parameter('v_max', 0.1)                # m/s
         self.declare_parameter('w_max', 0.75)                 # rad/s
@@ -38,6 +38,7 @@ class NavigationExecutor(Node):
         self.declare_parameter('control_rate', 20.0)         # Hz
 
         self.path_topic = self.get_parameter('path_topic').get_parameter_value().string_value
+        
         self.cmd_topic = self.get_parameter('cmd_topic').get_parameter_value().string_value
         self.target_frame = self.get_parameter('target_frame').get_parameter_value().string_value
         self.base_frame = self.get_parameter('base_frame').get_parameter_value().string_value
@@ -52,17 +53,36 @@ class NavigationExecutor(Node):
 
         self.tf_buffer: Buffer = Buffer(cache_time=rclpy.duration.Duration(seconds=10.0))
         self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
+        
+       
+        self.path = Path()
+        self.path.header.frame_id = 'odom'
+        self.path.header.stamp = self.get_clock().now().to_msg()
+        
+    
+    
+        ps = PoseStamped()
+        ps.header.frame_id = 'odom'
+        ps.header.stamp = self.path.header.stamp
+        #ps.pose.position.x = x+dx; ps.pose.position.y = y+dy; ps.pose.orientation.w = 1.0
+        ps.pose.position.x = 1.
+        ps.pose.position.y = 0.
+        self.path.poses.append(ps)
 
-        self.path_sub = self.create_subscription(
-            Path,                 # message type
-            self.path_topic,      # topic name (string)
-            self.path_cb,         # callback when a message arrives
-            1                    # queue size
-        )
+        ps = PoseStamped()
+        ps.header.frame_id = 'odom'
+        ps.header.stamp = self.path.header.stamp
+        #ps.pose.position.x = x+dx; ps.pose.position.y = y+dy; ps.pose.orientation.w = 1.0
+        ps.pose.position.x = 1.
+        ps.pose.position.y = 1.
+        self.path.poses.append(ps)
 
+
+        print(self.path)
+        self.current_path = self.path
         self.cmd_pub = self.create_publisher(Twist, self.cmd_topic, 10)
 
-        self.current_path: Optional[Path] = None
+        #self.current_path: Optional[Path] = None
         self.goal_index: int = 0
         self.timer = self.create_timer(1.0 / self.control_rate, self.control_loop)
 
@@ -119,13 +139,13 @@ class NavigationExecutor(Node):
         if self.current_path is None:
             return
         pose = self.get_robot_pose()
-        print("pose", pose)
+        #print("pose", pose)
         if pose is None:
             return
         rx, ry, rth = pose
-        idx = self.find_lookahead_index(rx, ry)
-        if idx is None:
-            return
+        #idx = self.find_lookahead_index(rx, ry)
+        #if idx is None:
+        #    return
 
         goal = self.current_path.poses[-1].pose
         gx, gy = goal.position.x, goal.position.y
@@ -135,14 +155,19 @@ class NavigationExecutor(Node):
         dxg, dyg = gx - rx, gy - ry
         dist_goal = math.hypot(dxg, dyg)
         if dist_goal <= self.goal_tol_xy:
-            dth = (gth - rth + math.pi) % (2*math.pi) - math.pi # shortest angle between 
+            #dth = (gth - rth + math.pi) % (2*math.pi) - math.pi # shortest angle between 
             #the robot’s facing direction and the goal’s desired facing direction
-            if abs(dth) <= self.goal_tol_yaw:
+            #if abs(dth) <= self.goal_tol_yaw:
+            print(self.current_path(self.goal_index))
+            self.goal_index +=1
+            
+            print("moved to next node")
+            if self.goal_index == len(self.current_path):
                 self.stop_robot()
                 self.current_path = None
                 return
 
-        target = self.current_path.poses[idx].pose.position
+        target = self.current_path.poses[self.goal_index].pose.position
         dx, dy = target.x - rx, target.y - ry
         # transform to robot frame
         c, s = math.cos(-rth), math.sin(-rth)
@@ -155,29 +180,34 @@ class NavigationExecutor(Node):
             return
 
         #curvature = 2.0 * y_r / (self.lookahead**2 + 1e-6)
-        dth = rth - math.atan(dx/dy)
+        #dth = rth - math.atan2(dx/dy)
+        dth = (math.atan2(dy, dx) - rth + math.pi) % (2*math.pi) - math.pi
         v = self.k_v * min(self.v_max, dist_goal)
         #w = self.k_w * v * curvature
-        w = dth*.1
+        w = dth*.5
         v = max(min(v, self.v_max), -self.v_max)
         w = max(min(w, self.w_max), -self.w_max)
-        print(dth, rth)
+        
         cmd = Twist()
         cmd.linear.x = v
         cmd.angular.z = w
-        self.get_logger().info(f"Publishing command: v={v:.3f}, w={w:.3f},")
+        #self.get_logger().info(f"Publishing command: v={v:.3f}, w={w:.3f},")
         self.cmd_pub.publish(cmd)
 
-        self.goal_index = max(self.goal_index, idx)
+        #self.goal_index = max(self.goal_index, idx)
 
     def stop_robot(self):
-        self.get_logger().info("Publishing final stop command (goal reached): v=0.0, w=0.0")
+        #self.get_logger().info("Publishing final stop command (goal reached): v=0.0, w=0.0")
         self.cmd_pub.publish(Twist())
 
 def main():
     rclpy.init()
     node = NavigationExecutor()
     rclpy.spin(node)
+  
+
     node.stop_robot()
     node.destroy_node()
     rclpy.shutdown()
+
+
