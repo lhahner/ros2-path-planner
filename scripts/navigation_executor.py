@@ -31,7 +31,7 @@ class NavigationExecutor(Node):
         self.declare_parameter('lookahead', 0.5)             # m
         self.declare_parameter('goal_tolerance_xy', 0.15)    # m
         self.declare_parameter('goal_tolerance_yaw', 0.25)   # rad
-        self.declare_parameter('v_max', 0.25)                # m/s
+        self.declare_parameter('v_max', 0.2)                # m/s
         self.declare_parameter('w_max', 1.0)                 # rad/s
         self.declare_parameter('k_v', 1.0)                   # scale lin
         self.declare_parameter('k_w', 2.0)                   # scale ang
@@ -65,9 +65,20 @@ class NavigationExecutor(Node):
         self.current_path: Optional[Path] = None
         self.goal_index: int = 0
         self.timer = self.create_timer(1.0 / self.control_rate, self.control_loop)
-        print("finished init")
+
 
     def path_cb(self, msg: Path):
+
+        if not msg.poses:
+            self.get_logger().warn("Received empty path")
+            return
+        if msg.header.frame_id != self.target_frame:
+            self.get_logger().warn(
+                f'Path frame "{msg.header.frame_id}" != target_frame "{self.target_frame}"'
+            )
+        self.get_logger().info(
+            f"Received path with {len(msg.poses)} poses (frame: {msg.header.frame_id})"
+        )
         if not msg.poses:
             return
         if msg.header.frame_id != self.target_frame:
@@ -108,6 +119,7 @@ class NavigationExecutor(Node):
         if self.current_path is None:
             return
         pose = self.get_robot_pose()
+        print("pose", pose)
         if pose is None:
             return
         rx, ry, rth = pose
@@ -142,21 +154,22 @@ class NavigationExecutor(Node):
             self.cmd_pub.publish(cmd)
             return
 
-        curvature = 2.0 * y_r / (self.lookahead**2 + 1e-6)
+        #curvature = 2.0 * y_r / (self.lookahead**2 + 1e-6)
         v = self.k_v * min(self.v_max, dist_goal)
-        w = self.k_w * v * curvature
-        v = max(min(v, self.v_max), -self.v_max)
-        w = max(min(w, self.w_max), -self.w_max)
+        #w = self.k_w * v * curvature
+        #v = max(min(v, self.v_max), -self.v_max)
+        #w = max(min(w, self.w_max), -self.w_max)
 
         cmd = Twist()
         cmd.linear.x = v
-        cmd.angular.z = w
-        print(cmd)
+        cmd.angular.z = 0.#w
+        self.get_logger().info(f"Publishing command: v={v:.3f},")
         self.cmd_pub.publish(cmd)
 
         self.goal_index = max(self.goal_index, idx)
 
     def stop_robot(self):
+        self.get_logger().info("Publishing final stop command (goal reached): v=0.0, w=0.0")
         self.cmd_pub.publish(Twist())
 
 def main():
