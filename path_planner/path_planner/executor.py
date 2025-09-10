@@ -7,8 +7,8 @@ import rclpy
 import tf2_ros
 
 from geometry_msgs.msg import PoseStamped, Twist, TransformStamped
-from nav_msgs.msg import Path
-from rclpy.node import Node
+from nav_msgs.msg import Path, OccupancyGrid, Odometry
+from rclpy.node import Node, qos_profile_sensor_data, QoSProfile
 from tf2_ros import Buffer, TransformListener
 
 def yaw_from_quat(q):
@@ -123,10 +123,6 @@ class PathLibrary:
 class NavigationExecutor(Node):
     def __init__(self):
         super().__init__('executor')
-        ############ path test declarations#####
-        self.declare_parameter('test_path_type', 'figure8')
-        self.declare_parameter('path_scale', 1.0)
-        self.declare_parameter('path_resolution', 0.05)
         
         self.cmd_topic = '/cmd_vel'
         self.target_frame = 'odom'
@@ -139,34 +135,25 @@ class NavigationExecutor(Node):
 
         self.tf_buffer: Buffer = Buffer(cache_time=rclpy.duration.Duration(seconds=10.0))
         self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
-        #############path test init parameters#####################
-        self.test_path_type = self.get_parameter('test_path_type').get_parameter_value().string_value
-        self.path_scale = self.get_parameter('path_scale').get_parameter_value().double_value
-        self.path_resolution = self.get_parameter('path_resolution').get_parameter_value().double_value
-        self.origin_x = 0.0
-        self.origin_y = 0.0
 
-        self.map_sub = self.create_subscription(
-            OccupancyGrid,
-            'map',
-            self.occ_callback,
-            qos_profile=qos_profile_sensor_data
-        )
-
-        ###########################################################
-       
         lib = PathLibrary(self)
         self.current_path = lib.build(
             frame_id=self.target_frame,
-            shape=self.test_path_type,
-            scale=self.path_scale,
-            res=self.path_resolution,
-            ox=self.origin_x,
-            oy=self.origin_y
+            shape='figure8',
+            scale=1.0,
+            res=0.05,
+            ox=0.0,
+            oy=0.0
         )
 
+        self.current_path = None
+        self.occ_map = None
 
         self.cmd_pub = self.create_publisher(Twist, self.cmd_topic, 10)
+        self.map_sub = self.create_subscription(OccupancyGrid, 
+                                                'map', 
+                                                self.occ_callback, 
+                                                qos_profile=qos_profile_sensor_data)
 
         self.goal_index: int = 0
         self.timer = self.create_timer(1.0 / self.control_rate, self.control_loop)
@@ -190,6 +177,9 @@ class NavigationExecutor(Node):
             self.get_logger().warn(f'Path frame "{msg.header.frame_id}" != target_frame "{self.target_frame}"')
         self.current_path = msg
         self.goal_index = 0
+        
+    def occ_callback(self, msg):
+        self.occ_map = msg
 
     def get_robot_pose(self):
         try:
@@ -199,7 +189,10 @@ class NavigationExecutor(Node):
             return None
 
     def control_loop(self):
+        self.current_path = None
         if self.current_path is None:
+            print("wah")
+            rclpy.shutdown()
             return
 
         pose = self.get_robot_pose()
@@ -230,7 +223,6 @@ class NavigationExecutor(Node):
             print("reached waypoint " + str(self.goal_index))
             self.goal_index += 1
             if self.goal_index >= len(poses):
-                self.stop_robot()
                 self.current_path = None
                 print("finished path")
             return  # let next timer tick pick up the next waypoint
@@ -249,19 +241,16 @@ class NavigationExecutor(Node):
         cmd.angular.z = max(min(w_cmd, self.w_max), -self.w_max)
         self.cmd_pub.publish(cmd)
 
-    def stop_robot(self):
-        #self.get_logger().info("Publishing final stop command (goal reached): v=0.0, w=0.0")
-        print("a")
-        self.cmd_pub.publish(Twist())
-
 def main():
+    print("test")
     rclpy.init()
     node = NavigationExecutor()
     rclpy.spin(node)
   
+    print("exiting")
 
-    node.stop_robot()
     node.destroy_node()
+    node.stop_robot()
     rclpy.shutdown()
 
 
