@@ -58,23 +58,34 @@ class NavigationExecutor(Node):
         self.path = Path()
         self.path.header.frame_id = 'odom'
         self.path.header.stamp = self.get_clock().now().to_msg()
-        
-    
+        """REP-103 is a ROS Enhancement Proposal
+        According to REP-103:
+
+        x-axis → forward (direction the robot “faces”)
+
+        y-axis → left (from the robot’s point of view)
+        Rotation about these axes follows the right-hand rule:
+
+        Positive yaw (rotation about z) turns counterclockwise when viewed from above — so the robot turns left.
+
+        Positive pitch (about y) tips the robot’s nose up."""
     
         ps = PoseStamped()
         ps.header.frame_id = 'odom'
         ps.header.stamp = self.path.header.stamp
         #ps.pose.position.x = x+dx; ps.pose.position.y = y+dy; ps.pose.orientation.w = 1.0
-        ps.pose.position.x = 1.
+        ps.pose.position.x = .7
         ps.pose.position.y = 0.
+        ps.pose.orientation.w = 1.0
         self.path.poses.append(ps)
 
         ps = PoseStamped()
         ps.header.frame_id = 'odom'
         ps.header.stamp = self.path.header.stamp
         #ps.pose.position.x = x+dx; ps.pose.position.y = y+dy; ps.pose.orientation.w = 1.0
-        ps.pose.position.x = 1.
-        ps.pose.position.y = 1.
+        ps.pose.position.x = .7
+        ps.pose.position.y = .7
+        ps.pose.orientation.w = 1.0
         self.path.poses.append(ps)
 
 
@@ -138,63 +149,59 @@ class NavigationExecutor(Node):
     def control_loop(self):
         if self.current_path is None:
             return
+
         pose = self.get_robot_pose()
-        #print("pose", pose)
         if pose is None:
             return
         rx, ry, rth = pose
-        #idx = self.find_lookahead_index(rx, ry)
-        #if idx is None:
-        #    return
 
-        goal = self.current_path.poses[-1].pose
-        gx, gy = goal.position.x, goal.position.y
-        # goal.orientation is a quaternion (x, y, z, w)
-        gth = yaw_from_quat(goal.orientation) # yaw angle (heading) in radians
-
-        dxg, dyg = gx - rx, gy - ry
-        dist_goal = math.hypot(dxg, dyg)
-        if dist_goal <= self.goal_tol_xy:
-            #dth = (gth - rth + math.pi) % (2*math.pi) - math.pi # shortest angle between 
-            #the robot’s facing direction and the goal’s desired facing direction
-            #if abs(dth) <= self.goal_tol_yaw:
-            print(self.current_path(self.goal_index))
-            self.goal_index +=1
-            
-            print("moved to next node")
-            if self.goal_index == len(self.current_path):
-                self.stop_robot()
-                self.current_path = None
-                return
-
-        target = self.current_path.poses[self.goal_index].pose.position
-        dx, dy = target.x - rx, target.y - ry
-        # transform to robot frame
-        c, s = math.cos(-rth), math.sin(-rth)
-        x_r = c*dx - s*dy
-        y_r = s*dx + c*dy
-
-        if x_r <= 1e-3 and abs(y_r) < 1e-3:
-            cmd = Twist()
-            self.cmd_pub.publish(cmd)
+        poses = self.current_path.poses
+        if not poses:
             return
 
-        #curvature = 2.0 * y_r / (self.lookahead**2 + 1e-6)
-        #dth = rth - math.atan2(dx/dy)
-        dth = (math.atan2(dy, dx) - rth + math.pi) % (2*math.pi) - math.pi
-        v = self.k_v * min(self.v_max, dist_goal)
-        #w = self.k_w * v * curvature
-        w = dth*.5
-        v = max(min(v, self.v_max), -self.v_max)
-        w = max(min(w, self.w_max), -self.w_max)
-        
-        cmd = Twist()
-        cmd.linear.x = v
-        cmd.angular.z = w
-        #self.get_logger().info(f"Publishing command: v={v:.3f}, w={w:.3f},")
-        self.cmd_pub.publish(cmd)
+        if self.goal_index >= len(poses):
+            self.stop_robot()
+            self.current_path = None
+            return
 
-        #self.goal_index = max(self.goal_index, idx)
+        cur_wp = poses[self.goal_index].pose
+        tx, ty = cur_wp.position.x, cur_wp.position.y
+
+        # distance to current waypoint
+        dx, dy = tx - rx, ty - ry
+        dist_wp = math.hypot(dx, dy)
+
+        # if close enough to current waypoint → advance
+        if dist_wp <= self.goal_tol_xy:
+            self.get_logger().info(
+            f"[DEBUG] Reached waypoint {self.goal_index} (tol={self.goal_tol_xy:.3f}), advancing"
+        )
+            self.goal_index += 1
+            if self.goal_index >= len(poses):
+                self.stop_robot()
+                self.current_path = None
+            return  # let next timer tick pick up the next waypoint
+
+       
+        desired_yaw = math.atan2(dy, dx)
+        dth = (desired_yaw - rth + math.pi) % (2*math.pi) - math.pi
+
+        # heading alignment gating
+        heading_scale = max(0.0, math.cos(dth))  # 1 when aligned, 0 when 90° off
+        v_cmd = self.k_v * min(self.v_max, dist_wp) * heading_scale
+        w_cmd = self.k_w * dth
+
+      
+        v_cmd = max(min(v_cmd, self.v_max), -self.v_max)
+        w_cmd = max(min(w_cmd, self.w_max), -self.w_max)
+        """self.get_logger().info(
+            f"[DEBUG] heading_scale={heading_scale:.3f} "
+            f"v_cmd={v_cmd:.3f} w_cmd={w_cmd:.3f}"
+            )"""
+        cmd = Twist()
+        cmd.linear.x = v_cmd
+        cmd.angular.z = w_cmd
+        self.cmd_pub.publish(cmd)
 
     def stop_robot(self):
         #self.get_logger().info("Publishing final stop command (goal reached): v=0.0, w=0.0")
