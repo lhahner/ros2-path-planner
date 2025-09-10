@@ -135,7 +135,7 @@ class NavigationExecutor(Node):
 
         self.tf_buffer: Buffer = Buffer(cache_time=rclpy.duration.Duration(seconds=10.0))
         self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
-       
+
         lib = PathLibrary(self)
         self.current_path = lib.build(
             frame_id=self.target_frame,
@@ -149,6 +149,10 @@ class NavigationExecutor(Node):
         self.current_path = None
 
         self.cmd_pub = self.create_publisher(Twist, self.cmd_topic, 10)
+        self.map_sub = self.create_subscription(OccupancyGrid, 
+                                                'map', 
+                                                self.occ_callback, 
+                                                qos_profile=qos_profile_sensor_data)
 
         self.goal_index: int = 0
         self.timer = self.create_timer(1.0 / self.control_rate, self.control_loop)
