@@ -1,10 +1,16 @@
+from Planner import Planner
+
 """
+The implementation of the A-Star Algorithm is realized in this class. 
+Give the constructor a map and a threshold.
+
+TODO changing orientation depending at which node we are
 """
 class AStar(Planner):
     def __init__(self, map, threshold):
         """
         """
-        self.path = None
+        self.path = Path()
         self.map = map
         self.threshold = threshold
         self.cost_map = 255.0 / np.maximum(self.map, 1)
@@ -17,13 +23,12 @@ class AStar(Planner):
 
     def get_neighbors(self, node, treshold):
         r, c = node
-        
-       directions = [(r-1, c), (r+1, c), (r, c-1), (r, c+1)] # move sidewards or diagonal
+        directions = [(r-1, c), (r+1, c), (r, c-1), (r, c+1)] 
 
         neighbors = []
         for r, c in directions:
-            if 0 <= r < self.height and 
-               0 <= c < self.width and self.map[r,c] > treshold: 
+            if 0 <= r < self.height and \
+                    0 <= c < self.width and self.map[r,c] > treshold: 
                 neighbors.append((r, c))
 
         return neighbors
