@@ -46,4 +46,4 @@ main(argc, argv):
 if __name__ = '__main__':
   main(1, <Algorithm_name>())
 ```
-This is equivalent to the stragey-design-pattern.
+This is equivalent to the strategy-design-pattern.
