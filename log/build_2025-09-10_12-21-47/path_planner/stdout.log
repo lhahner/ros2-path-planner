@@ -1,0 +1,36 @@
+running egg_info
+creating ../build/path_planner/path_planner.egg-info
+writing ../build/path_planner/path_planner.egg-info/PKG-INFO
+writing dependency_links to ../build/path_planner/path_planner.egg-info/dependency_links.txt
+writing entry points to ../build/path_planner/path_planner.egg-info/entry_points.txt
+writing requirements to ../build/path_planner/path_planner.egg-info/requires.txt
+writing top-level names to ../build/path_planner/path_planner.egg-info/top_level.txt
+writing manifest file '../build/path_planner/path_planner.egg-info/SOURCES.txt'
+reading manifest file '../build/path_planner/path_planner.egg-info/SOURCES.txt'
+adding license file 'LICENSE'
+writing manifest file '../build/path_planner/path_planner.egg-info/SOURCES.txt'
+running build
+running build_py
+creating /home/konstantin/ros2-path-planner/build/path_planner/build
+creating /home/konstantin/ros2-path-planner/build/path_planner/build/lib
+creating /home/konstantin/ros2-path-planner/build/path_planner/build/lib/path_planner
+copying path_planner/executor.py -> /home/konstantin/ros2-path-planner/build/path_planner/build/lib/path_planner
+copying path_planner/__init__.py -> /home/konstantin/ros2-path-planner/build/path_planner/build/lib/path_planner
+running install
+running install_lib
+creating /home/konstantin/ros2-path-planner/install/path_planner/lib/python3.10/site-packages/path_planner
+copying /home/konstantin/ros2-path-planner/build/path_planner/build/lib/path_planner/executor.py -> /home/konstantin/ros2-path-planner/install/path_planner/lib/python3.10/site-packages/path_planner
+copying /home/konstantin/ros2-path-planner/build/path_planner/build/lib/path_planner/__init__.py -> /home/konstantin/ros2-path-planner/install/path_planner/lib/python3.10/site-packages/path_planner
+byte-compiling /home/konstantin/ros2-path-planner/install/path_planner/lib/python3.10/site-packages/path_planner/executor.py to executor.cpython-310.pyc
+byte-compiling /home/konstantin/ros2-path-planner/install/path_planner/lib/python3.10/site-packages/path_planner/__init__.py to __init__.cpython-310.pyc
+running install_data
+creating /home/konstantin/ros2-path-planner/install/path_planner/share/ament_index
+creating /home/konstantin/ros2-path-planner/install/path_planner/share/ament_index/resource_index
+creating /home/konstantin/ros2-path-planner/install/path_planner/share/ament_index/resource_index/packages
+copying resource/path_planner -> /home/konstantin/ros2-path-planner/install/path_planner/share/ament_index/resource_index/packages
+copying package.xml -> /home/konstantin/ros2-path-planner/install/path_planner/share/path_planner
+running install_egg_info
+Copying ../build/path_planner/path_planner.egg-info to /home/konstantin/ros2-path-planner/install/path_planner/lib/python3.10/site-packages/path_planner-0.0.0-py3.10.egg-info
+running install_scripts
+Installing executor script to /home/konstantin/ros2-path-planner/install/path_planner/lib/path_planner
+writing list of installed files to '/home/konstantin/ros2-path-planner/build/path_planner/install.log'

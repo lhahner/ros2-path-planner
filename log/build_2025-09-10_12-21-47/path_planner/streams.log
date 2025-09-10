@@ -1,0 +1,38 @@
+[1.365s] Invoking command in '/home/konstantin/ros2-path-planner/path_planner': PYTHONPATH=/home/konstantin/ros2-path-planner/build/path_planner/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/konstantin/ros2-path-planner/install/path_planner/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/path_planner build --build-base /home/konstantin/ros2-path-planner/build/path_planner/build install --record /home/konstantin/ros2-path-planner/build/path_planner/install.log --single-version-externally-managed install_data
+[1.866s] running egg_info
+[1.866s] creating ../build/path_planner/path_planner.egg-info
+[1.867s] writing ../build/path_planner/path_planner.egg-info/PKG-INFO
+[1.867s] writing dependency_links to ../build/path_planner/path_planner.egg-info/dependency_links.txt
+[1.868s] writing entry points to ../build/path_planner/path_planner.egg-info/entry_points.txt
+[1.868s] writing requirements to ../build/path_planner/path_planner.egg-info/requires.txt
+[1.869s] writing top-level names to ../build/path_planner/path_planner.egg-info/top_level.txt
+[1.869s] writing manifest file '../build/path_planner/path_planner.egg-info/SOURCES.txt'
+[1.873s] reading manifest file '../build/path_planner/path_planner.egg-info/SOURCES.txt'
+[1.873s] adding license file 'LICENSE'
+[1.875s] writing manifest file '../build/path_planner/path_planner.egg-info/SOURCES.txt'
+[1.875s] running build
+[1.877s] running build_py
+[1.877s] creating /home/konstantin/ros2-path-planner/build/path_planner/build
+[1.877s] creating /home/konstantin/ros2-path-planner/build/path_planner/build/lib
+[1.877s] creating /home/konstantin/ros2-path-planner/build/path_planner/build/lib/path_planner
+[1.877s] copying path_planner/executor.py -> /home/konstantin/ros2-path-planner/build/path_planner/build/lib/path_planner
+[1.878s] copying path_planner/__init__.py -> /home/konstantin/ros2-path-planner/build/path_planner/build/lib/path_planner
+[1.878s] running install
+[1.878s] running install_lib
+[1.880s] creating /home/konstantin/ros2-path-planner/install/path_planner/lib/python3.10/site-packages/path_planner
+[1.880s] copying /home/konstantin/ros2-path-planner/build/path_planner/build/lib/path_planner/executor.py -> /home/konstantin/ros2-path-planner/install/path_planner/lib/python3.10/site-packages/path_planner
+[1.880s] copying /home/konstantin/ros2-path-planner/build/path_planner/build/lib/path_planner/__init__.py -> /home/konstantin/ros2-path-planner/install/path_planner/lib/python3.10/site-packages/path_planner
+[1.882s] byte-compiling /home/konstantin/ros2-path-planner/install/path_planner/lib/python3.10/site-packages/path_planner/executor.py to executor.cpython-310.pyc
+[1.887s] byte-compiling /home/konstantin/ros2-path-planner/install/path_planner/lib/python3.10/site-packages/path_planner/__init__.py to __init__.cpython-310.pyc
+[1.887s] running install_data
+[1.887s] creating /home/konstantin/ros2-path-planner/install/path_planner/share/ament_index
+[1.888s] creating /home/konstantin/ros2-path-planner/install/path_planner/share/ament_index/resource_index
+[1.888s] creating /home/konstantin/ros2-path-planner/install/path_planner/share/ament_index/resource_index/packages
+[1.888s] copying resource/path_planner -> /home/konstantin/ros2-path-planner/install/path_planner/share/ament_index/resource_index/packages
+[1.888s] copying package.xml -> /home/konstantin/ros2-path-planner/install/path_planner/share/path_planner
+[1.889s] running install_egg_info
+[1.892s] Copying ../build/path_planner/path_planner.egg-info to /home/konstantin/ros2-path-planner/install/path_planner/lib/python3.10/site-packages/path_planner-0.0.0-py3.10.egg-info
+[1.894s] running install_scripts
+[1.931s] Installing executor script to /home/konstantin/ros2-path-planner/install/path_planner/lib/path_planner
+[1.931s] writing list of installed files to '/home/konstantin/ros2-path-planner/build/path_planner/install.log'
+[1.985s] Invoked command in '/home/konstantin/ros2-path-planner/path_planner' returned '0': PYTHONPATH=/home/konstantin/ros2-path-planner/build/path_planner/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/konstantin/ros2-path-planner/install/path_planner/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/path_planner build --build-base /home/konstantin/ros2-path-planner/build/path_planner/build install --record /home/konstantin/ros2-path-planner/build/path_planner/install.log --single-version-externally-managed install_data

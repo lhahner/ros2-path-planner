@@ -1,21 +1,15 @@
-
-
 # example call: 
 # ros2 run nav_exec navigation_executor   --ros-args   -p target_frame:=odom   -p base_frame:=base_footprint   -p test_path_type:=zigzag   -p path_scale:=.8   -p path_resolution:=0.03
 # see more options for test_path_type in class PathLibrary
 
-
-
 import math
-from typing import Optional
-from geometry_msgs.msg import PoseStamped
 import rclpy
-from rclpy.node import Node
-from geometry_msgs.msg import Twist
-from nav_msgs.msg import Path
 import tf2_ros
+
+from geometry_msgs.msg import PoseStamped, Twist, TransformStamped
+from nav_msgs.msg import Path
+from rclpy.node import Node
 from tf2_ros import Buffer, TransformListener
-from geometry_msgs.msg import TransformStamped
 
 def yaw_from_quat(q):
     siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
@@ -26,6 +20,7 @@ def transform_pose_xytheta(tf: TransformStamped):
     t = tf.transform.translation
     r = tf.transform.rotation
     return t.x, t.y, yaw_from_quat(r)
+    
 class PathLibrary:
     def __init__(self, node: Node):
         self.node = node
@@ -127,42 +122,20 @@ class PathLibrary:
 
 class NavigationExecutor(Node):
     def __init__(self):
-        super().__init__('navigation_executor')
-        # self.declare_parameter('my_parameter', 'world') of the constructor creates 
-        # a parameter with the name my_parameter and a default value of world
-        self.declare_parameter('path_topic', '/planned_path')
-        self.declare_parameter('cmd_topic', '/cmd_vel')
-        self.declare_parameter('target_frame', 'odom')       # or 'map'
-        self.declare_parameter('base_frame', 'base_link')
-        self.declare_parameter('lookahead', 0.5)             
-        self.declare_parameter('goal_tolerance_xy', 0.15)    
-        self.declare_parameter('goal_tolerance_yaw', 0.25)   # rad
-        self.declare_parameter('v_max', 0.1)                # m/s
-        self.declare_parameter('w_max', 0.75)                 # rad/s
-        self.declare_parameter('k_v', 1.0)                   # scale lin
-        self.declare_parameter('k_w', 2.0)                   # scale ang
-        self.declare_parameter('control_rate', 20.0)         # Hz
+        super().__init__('executor')
         ############ path test declarations#####
-
         self.declare_parameter('test_path_type', 'figure8')
         self.declare_parameter('path_scale', 1.0)
         self.declare_parameter('path_resolution', 0.05)
-        self.declare_parameter('origin_x', 0.0)
-        self.declare_parameter('origin_y', 0.0)
-        ##########################################
-        self.path_topic = self.get_parameter('path_topic').get_parameter_value().string_value
         
-        self.cmd_topic = self.get_parameter('cmd_topic').get_parameter_value().string_value
-        self.target_frame = self.get_parameter('target_frame').get_parameter_value().string_value
-        self.base_frame = self.get_parameter('base_frame').get_parameter_value().string_value
-        self.lookahead = self.get_parameter('lookahead').get_parameter_value().double_value
-        self.goal_tol_xy = self.get_parameter('goal_tolerance_xy').get_parameter_value().double_value
-        self.goal_tol_yaw = self.get_parameter('goal_tolerance_yaw').get_parameter_value().double_value
-        self.v_max = self.get_parameter('v_max').get_parameter_value().double_value
-        self.w_max = self.get_parameter('w_max').get_parameter_value().double_value
-        self.k_v = self.get_parameter('k_v').get_parameter_value().double_value
-        self.k_w = self.get_parameter('k_w').get_parameter_value().double_value
-        self.control_rate = self.get_parameter('control_rate').get_parameter_value().double_value
+        self.cmd_topic = '/cmd_vel'
+        self.target_frame = 'odom'
+        self.base_frame = 'base_link'
+        self.goal_tol_xy = 0.15
+        self.goal_tol_yaw = 0.25
+        self.v_max = 0.1
+        self.w_max = 0.75
+        self.control_rate = 20.0
 
         self.tf_buffer: Buffer = Buffer(cache_time=rclpy.duration.Duration(seconds=10.0))
         self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
@@ -170,8 +143,8 @@ class NavigationExecutor(Node):
         self.test_path_type = self.get_parameter('test_path_type').get_parameter_value().string_value
         self.path_scale = self.get_parameter('path_scale').get_parameter_value().double_value
         self.path_resolution = self.get_parameter('path_resolution').get_parameter_value().double_value
-        self.origin_x = self.get_parameter('origin_x').get_parameter_value().double_value
-        self.origin_y = self.get_parameter('origin_y').get_parameter_value().double_value
+        self.origin_x = 0.0
+        self.origin_y = 0.0
 
 
 
@@ -190,7 +163,6 @@ class NavigationExecutor(Node):
 
         self.cmd_pub = self.create_publisher(Twist, self.cmd_topic, 10)
 
-        #self.current_path: Optional[Path] = None
         self.goal_index: int = 0
         self.timer = self.create_timer(1.0 / self.control_rate, self.control_loop)
 
@@ -221,28 +193,6 @@ class NavigationExecutor(Node):
         except Exception:
             return None
 
-    def find_lookahead_index(self, rx, ry):
-        if self.current_path is None:
-            return None
-        poses = self.current_path.poses
-        n = len(poses)
-        # advance to nearest segment
-        start = self.goal_index
-        best_i = start
-        best_d = float('inf')
-        for i in range(start, n):
-            p = poses[i].pose.position
-            d = math.hypot(p.x - rx, p.y - ry)
-            if d < best_d:
-                best_d = d
-                best_i = i
-        # find lookahead
-        for i in range(best_i, n):
-            p = poses[i].pose.position
-            if math.hypot(p.x - rx, p.y - ry) >= self.lookahead:
-                return i
-        return n - 1
-
     def control_loop(self):
         if self.current_path is None:
             return
@@ -250,15 +200,17 @@ class NavigationExecutor(Node):
         pose = self.get_robot_pose()
         if pose is None:
             return
+            
         rx, ry, rth = pose
-
         poses = self.current_path.poses
+        
         if not poses:
             return
 
         if self.goal_index >= len(poses):
             self.stop_robot()
             self.current_path = None
+            print("reached goal")
             return
 
         cur_wp = poses[self.goal_index].pose
@@ -270,9 +222,7 @@ class NavigationExecutor(Node):
 
         # if close enough to current waypoint → advance
         if dist_wp <= self.goal_tol_xy:
-            self.get_logger().info(
-            f"[DEBUG] Reached waypoint {self.goal_index} (tol={self.goal_tol_xy:.3f}), advancing"
-        )
+            print("reached waypoint " + str(self.goal_index))
             self.goal_index += 1
             if self.goal_index >= len(poses):
                 self.stop_robot()
@@ -286,23 +236,17 @@ class NavigationExecutor(Node):
 
         # heading alignment gating
         heading_scale = max(0.0, math.cos(dth))  # 1 when aligned, 0 when 90° off
-        v_cmd = self.k_v * min(self.v_max, dist_wp) * heading_scale
-        w_cmd = self.k_w * dth
+        v_cmd = min(self.v_max, dist_wp) * heading_scale
+        w_cmd = dth
 
-      
-        v_cmd = max(min(v_cmd, self.v_max), -self.v_max)
-        w_cmd = max(min(w_cmd, self.w_max), -self.w_max)
-        """self.get_logger().info(
-            f"[DEBUG] heading_scale={heading_scale:.3f} "
-            f"v_cmd={v_cmd:.3f} w_cmd={w_cmd:.3f}"
-            )"""
         cmd = Twist()
-        cmd.linear.x = v_cmd
-        cmd.angular.z = w_cmd
+        cmd.linear.x = max(min(v_cmd, self.v_max), -self.v_max)
+        cmd.angular.z = max(min(w_cmd, self.w_max), -self.w_max)
         self.cmd_pub.publish(cmd)
 
     def stop_robot(self):
         #self.get_logger().info("Publishing final stop command (goal reached): v=0.0, w=0.0")
+        print("a")
         self.cmd_pub.publish(Twist())
 
 def main():
