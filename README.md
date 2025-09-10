@@ -6,9 +6,6 @@ other scenario the robot should detect an obstacle and autonomously drive around
 ---
 
 ## How To's
-### How To integrate a custom Python script into `ros2-humble`
-<!-- TODO -->
-
 ### How to create a package
 `cd ~/turtlebot3_ws`  
 `ros2 pkg create --build-type ament_python --node-name my_node my_package`  
