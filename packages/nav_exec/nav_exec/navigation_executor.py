@@ -1,3 +1,11 @@
+
+
+# example call: 
+# ros2 run nav_exec navigation_executor   --ros-args   -p target_frame:=odom   -p base_frame:=base_footprint   -p test_path_type:=zigzag   -p path_scale:=.8   -p path_resolution:=0.03
+# see more options for test_path_type in class PathLibrary
+
+
+
 import math
 from typing import Optional
 from geometry_msgs.msg import PoseStamped
@@ -18,6 +26,104 @@ def transform_pose_xytheta(tf: TransformStamped):
     t = tf.transform.translation
     r = tf.transform.rotation
     return t.x, t.y, yaw_from_quat(r)
+class PathLibrary:
+    def __init__(self, node: Node):
+        self.node = node
+
+    def _add_pose(self, path: Path, x: float, y: float):
+        ps = PoseStamped()
+        ps.header.frame_id = path.header.frame_id
+        ps.header.stamp = path.header.stamp
+        ps.pose.position.x = x
+        ps.pose.position.y = y
+        ps.pose.orientation.w = 1.0
+        path.poses.append(ps)
+
+    def build(self, frame_id: str, shape: str, scale: float, res: float, ox: float, oy: float) -> Path:
+        path = Path()
+        path.header.frame_id = frame_id
+        path.header.stamp = self.node.get_clock().now().to_msg()
+        res = max(1e-4, res)
+
+        if shape == 'line':
+            L = max(0.5, 1.0 * scale)
+            steps = max(2, int(L / res))
+            for i in range(steps + 1):
+                self._add_pose(path, ox + (i / steps) * L, oy)
+
+        elif shape == 'square':
+            S = max(0.5, 1.0 * scale)
+            n = max(1, int(S / res))
+            for i in range(n + 1): self._add_pose(path, ox + i*(S/n), oy)
+            for i in range(1, n + 1): self._add_pose(path, ox + S, oy + i*(S/n))
+            for i in range(1, n + 1): self._add_pose(path, ox + S - i*(S/n), oy + S)
+            for i in range(1, n): self._add_pose(path, ox, oy + S - i*(S/n))
+
+        elif shape == 'circle':
+            R = max(0.25, 0.5 * scale)
+            th = 0.0
+            while th <= 2*math.pi + 1e-6:
+                self._add_pose(path, ox + R*math.cos(th), oy + R*math.sin(th))
+                th += res  # res as rad step
+
+        elif shape == 'figure8':
+            a = max(0.25, 0.5 * scale)
+            b = max(0.25, 0.35 * scale)
+            t = 0.0
+            while t <= 2*math.pi + 1e-6:
+                self._add_pose(path, ox + a*math.sin(t), oy + b*math.sin(2*t))
+                t += res  # param step
+
+        elif shape == 's_curve':
+            L = max(0.8, 1.2 * scale)
+            A = 0.4 * scale
+            k = 2.0 * math.pi / max(0.8, 1.0 * scale)
+            n = max(2, int(L / res))
+            for i in range(n + 1):
+                x = ox + (i / n) * L
+                y = oy + A * math.sin(k * (x - ox))
+                self._add_pose(path, x, y)
+
+        elif shape == 'zigzag':
+            seg_len = max(0.2, 0.3 * scale)
+            amp = 0.4 * scale
+            segments = 8
+            x, y, up = ox, oy, True
+            pts_per = max(1, int(seg_len / res))
+            self._add_pose(path, x, y)
+            for _ in range(segments):
+                xn = x + seg_len
+                yn = oy + (amp if up else -amp)
+                for i in range(1, pts_per + 1):
+                    xi = x + (i/pts_per)*(xn - x)
+                    yi = y + (i/pts_per)*(yn - y)
+                    self._add_pose(path, xi, yi)
+                x, y, up = xn, yn, not up
+
+        elif shape == 'lemniscate':
+            a = max(0.3, 0.5 * scale)
+            t = -math.pi/4
+            t_end = math.pi/4
+            while t <= t_end + 1e-6:
+                r = (2*(a**2)*math.cos(2*t))**0.5
+                self._add_pose(path, ox + r*math.cos(t), oy + r*math.sin(t))
+                t += res
+            t = 3*math.pi/4
+            t_end = 5*math.pi/4
+            while t <= t_end + 1e-6:
+                r = (2*(a**2)*math.cos(2*t))**0.5
+                self._add_pose(path, ox + r*math.cos(t), oy + r*math.sin(t))
+                t += res
+
+        else:
+            L = max(0.5, 1.0 * scale)
+            steps = max(2, int(L / res))
+            for i in range(steps + 1):
+                self._add_pose(path, ox + (i / steps) * L, oy)
+
+        return path
+
+
 
 class NavigationExecutor(Node):
     def __init__(self):
@@ -36,7 +142,14 @@ class NavigationExecutor(Node):
         self.declare_parameter('k_v', 1.0)                   # scale lin
         self.declare_parameter('k_w', 2.0)                   # scale ang
         self.declare_parameter('control_rate', 20.0)         # Hz
+        ############ path test declarations#####
 
+        self.declare_parameter('test_path_type', 'figure8')
+        self.declare_parameter('path_scale', 1.0)
+        self.declare_parameter('path_resolution', 0.05)
+        self.declare_parameter('origin_x', 0.0)
+        self.declare_parameter('origin_y', 0.0)
+        ##########################################
         self.path_topic = self.get_parameter('path_topic').get_parameter_value().string_value
         
         self.cmd_topic = self.get_parameter('cmd_topic').get_parameter_value().string_value
@@ -53,44 +166,28 @@ class NavigationExecutor(Node):
 
         self.tf_buffer: Buffer = Buffer(cache_time=rclpy.duration.Duration(seconds=10.0))
         self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
-        
+        #############path test init parameters#####################
+        self.test_path_type = self.get_parameter('test_path_type').get_parameter_value().string_value
+        self.path_scale = self.get_parameter('path_scale').get_parameter_value().double_value
+        self.path_resolution = self.get_parameter('path_resolution').get_parameter_value().double_value
+        self.origin_x = self.get_parameter('origin_x').get_parameter_value().double_value
+        self.origin_y = self.get_parameter('origin_y').get_parameter_value().double_value
+
+
+
+        ###########################################################
        
-        self.path = Path()
-        self.path.header.frame_id = 'odom'
-        self.path.header.stamp = self.get_clock().now().to_msg()
-        """REP-103 is a ROS Enhancement Proposal
-        According to REP-103:
-
-        x-axis → forward (direction the robot “faces”)
-
-        y-axis → left (from the robot’s point of view)
-        Rotation about these axes follows the right-hand rule:
-
-        Positive yaw (rotation about z) turns counterclockwise when viewed from above — so the robot turns left.
-
-        Positive pitch (about y) tips the robot’s nose up."""
-    
-        ps = PoseStamped()
-        ps.header.frame_id = 'odom'
-        ps.header.stamp = self.path.header.stamp
-        #ps.pose.position.x = x+dx; ps.pose.position.y = y+dy; ps.pose.orientation.w = 1.0
-        ps.pose.position.x = .7
-        ps.pose.position.y = 0.
-        ps.pose.orientation.w = 1.0
-        self.path.poses.append(ps)
-
-        ps = PoseStamped()
-        ps.header.frame_id = 'odom'
-        ps.header.stamp = self.path.header.stamp
-        #ps.pose.position.x = x+dx; ps.pose.position.y = y+dy; ps.pose.orientation.w = 1.0
-        ps.pose.position.x = .7
-        ps.pose.position.y = .7
-        ps.pose.orientation.w = 1.0
-        self.path.poses.append(ps)
+        lib = PathLibrary(self)
+        self.current_path = lib.build(
+            frame_id=self.target_frame,
+            shape=self.test_path_type,
+            scale=self.path_scale,
+            res=self.path_resolution,
+            ox=self.origin_x,
+            oy=self.origin_y
+        )
 
 
-        print(self.path)
-        self.current_path = self.path
         self.cmd_pub = self.create_publisher(Twist, self.cmd_topic, 10)
 
         #self.current_path: Optional[Path] = None
@@ -180,6 +277,7 @@ class NavigationExecutor(Node):
             if self.goal_index >= len(poses):
                 self.stop_robot()
                 self.current_path = None
+                print("finished path")
             return  # let next timer tick pick up the next waypoint
 
        
