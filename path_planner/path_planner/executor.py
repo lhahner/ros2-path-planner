@@ -7,8 +7,8 @@ import rclpy
 import tf2_ros
 
 from geometry_msgs.msg import PoseStamped, Twist, TransformStamped
-from nav_msgs.msg import Path
-from rclpy.node import Node
+from nav_msgs.msg import Path, OccupancyGrid, Odometry
+from rclpy.node import Node, qos_profile_sensor_data, QoSProfile
 from tf2_ros import Buffer, TransformListener
 
 def yaw_from_quat(q):
@@ -147,6 +147,7 @@ class NavigationExecutor(Node):
         )
 
         self.current_path = None
+        self.occ_map = None
 
         self.cmd_pub = self.create_publisher(Twist, self.cmd_topic, 10)
         self.map_sub = self.create_subscription(OccupancyGrid, 
@@ -176,6 +177,9 @@ class NavigationExecutor(Node):
             self.get_logger().warn(f'Path frame "{msg.header.frame_id}" != target_frame "{self.target_frame}"')
         self.current_path = msg
         self.goal_index = 0
+        
+    def occ_callback(self, msg):
+        self.occ_map = msg
 
     def get_robot_pose(self):
         try:
