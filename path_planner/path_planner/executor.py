@@ -146,7 +146,12 @@ class NavigationExecutor(Node):
         self.origin_x = 0.0
         self.origin_y = 0.0
 
-
+        self.map_sub = self.create_subscription(
+            OccupancyGrid,
+            'map',
+            self.occ_callback,
+            qos_profile=qos_profile_sensor_data
+        )
 
         ###########################################################
        
