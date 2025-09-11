@@ -3,12 +3,14 @@
 # see more options for test_path_type in class PathLibrary
 
 import math
+import os
 import rclpy
 import tf2_ros
 
 from geometry_msgs.msg import PoseStamped, Twist, TransformStamped
 from nav_msgs.msg import Path, OccupancyGrid, Odometry
-from rclpy.node import Node, qos_profile_sensor_data, QoSProfile
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data, QoSProfile
 from tf2_ros import Buffer, TransformListener
 
 def yaw_from_quat(q):
@@ -192,7 +194,13 @@ class NavigationExecutor(Node):
         self.current_path = None
         if self.current_path is None:
             print("wah")
-            rclpy.shutdown()
+            self.cmd_pub.destroy()
+            self.map_sub.destroy()
+            self.destroy_node()
+            print("wah3")
+            return
+            
+        if self.occ_map is None:
             return
 
         pose = self.get_robot_pose()
@@ -242,15 +250,14 @@ class NavigationExecutor(Node):
         self.cmd_pub.publish(cmd)
 
 def main():
-    print("test")
+    #os.system('ros2 run cartographer_ros cartographer_node')
+    #print("launched carto")
     rclpy.init()
     node = NavigationExecutor()
     rclpy.spin(node)
   
     print("exiting")
 
-    node.destroy_node()
-    node.stop_robot()
     rclpy.shutdown()
 
 
