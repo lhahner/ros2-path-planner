@@ -1,4 +1,4 @@
-from abc import ABC, abastractmethod
+from abc import ABC, abstractmethod
 
 """
 Abstract class for different Path-Planning Algorithms, use this

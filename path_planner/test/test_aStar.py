@@ -2,22 +2,36 @@ import sys
 import pytest
 import numpy as np
 from path_planner.aStar import AStar
+from pgm_reader import Reader
+import matplotlib
+matplotlib.use("Agg")           
+import matplotlib.pyplot as plt
 
-@staticmethod
-def mockMap():
-    pgmf = '~/ros-path-planner/map.pgm'
-    assert pgmf.readline() == 'P5\n'
-    (width, height) = [int(i) for i in pgmf.readline().split()]
-    depth = int(pgmf.readline())
-    assert depth <= 254
+from path_planner.aStar import AStar
+from pgm_reader import Reader
 
-    map = []
-    for y in range(height):
-        row = []
-        for y in range(width):
-            row.append(ord(pgmf.read(0)))
-        map.append(row)
-    return map
+
+def read_pgm(pgmf):
+   header = pgmf.readline()
+   assert header[:2] == b'P5'
+   (width, height) = [int(i) for i in header.split()[1:3]]
+   depth = int(header.split()[3])
+   assert depth <= 65535
+
+   raster = []
+   for y in range(height):
+       row = []
+       for y in range(width):
+           low_bits = ord(pgmf.read(1))
+           row.append(low_bits+255*ord(pgmf.read(1)))
+       raster.append(row)
+   return raster
+
+def mockMap(pgm_path):
+    reader = Reader()
+    image = reader.read_pgm(pgm_path)
+    width = reader.width
+    return width, image
 
 def test_neighbors_returns_correct_cells():
     grid = np.array([
@@ -40,8 +54,27 @@ def test_plan_simple_path_clear_grid():
 def test_plan_respects_obstacles():
     grid = np.full((5,5), 255, dtype=np.uint8)
     grid[2, :] = 0
-    grid[2, 2] = 255  # gap
+    grid[2, 2] = 255 
     planner = AStar(grid, threshold=0)
     path = planner.plan((0,0), (4,4))
     assert path is not None
     assert (2,2) in path
+
+def test_reconstruct_path_reversed():
+    width, map = mockMap('../complex_map.pgm')
+    planner = AStar(map, threshold=1)
+    print("print cost map", planner.cost_map[6])
+
+def test_visualize_astar_saves_png(tmp_path):
+    grid = np.full((10, 10), 205, dtype=np.uint8)
+    planner = AStar(grid, threshold=0)
+    path = planner.plan((0, 0), (9, 9))
+    assert path is not None
+
+    fig, ax = planner.visualize(grid, path=path, title="A* Visualization (pytest)")
+    outpng = tmp_path / "astar_vis.png"
+    fig.savefig(outpng)
+    plt.close(fig)
+
+    assert outpng.exists()
+    assert outpng.stat().st_size > 0

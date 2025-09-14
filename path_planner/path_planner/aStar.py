@@ -1,18 +1,18 @@
 import math
 import heapq
 import numpy as np
-from Planner import Planner
-
-class Path(Planner):
-    """Tiny helper to mirror your original 'Path' usage."""
-    pass
+from .Planner import Planner
+import matplotlib
+matplotlib.use("Agg")           
+import matplotlib.pyplot as plt
+import sys
+import pytest
 
 class AStar(Planner):
     """
     Native implementation of the path planning algorithm A-start.
     """
-
-    def __init__(self, grid: np.ndarray, threshold: int = 0):
+    def __init__(self, grid: np.ndarray, threshold: int = 0, path=list()):
         """
         The constructor takes a map exectped to be of the type numpy array, which
         is the representation of the map. Further also the path threshold is definied
@@ -22,6 +22,7 @@ class AStar(Planner):
             threshold (int): The threshold for a node to check whether part of path.
         """
         self.map = grid
+        self.path = [] if path is None else path
         self.threshold = threshold
         self.cost_map = 255.0 / np.maximum(self.map, 1)
         self.height, self.width = self.map.shape
@@ -37,7 +38,7 @@ class AStar(Planner):
             b (dobule): In regular cases the goal position.
         
         Returns:
-            The costs traveling from start to goal.
+            Euclidean distance between a and b
         """
         return math.hypot(b[0] - a[0], b[1] - a[1])
 
@@ -70,14 +71,50 @@ class AStar(Planner):
         Returns
             The reversed path, which maps from start to finish.
         """
-        path = Path()
         while current in came_from:
-            path.append(current)
+            self.path.append(current)
             current = came_from[current]
-        path.append(current)            
-        path.reverse()
-        return path
+        self.path.append(current)            
+        self.path = list(reversed(self.path))
+        return self.path
+    
+    def visualize(self, grid, path=None, 
+                    closed=None, openset=None, 
+                    title="A* Visualization"):
+        """
+        Parameters
+            grid     : 2D np.ndarray
+            path     : list of (r,c) from start->goal
+            closed   : set of (r,c) expanded nodes (optional)
+            openset  : iterable of (r,c) currently in OPEN (optional)
+        """
+        H, W = grid.shape
+        fig, ax = plt.subplots(figsize=(6, 6))
+        ax.imshow(np.flipud(grid), cmap="gray", origin="lower", 
+        interpolation="nearest")
+    
+        if closed:
+            ys, xs = zip(*closed)
+            ax.scatter(xs, H - 1 - np.array(ys), s=4, marker='s', alpha=0.6, 
+            label="Closed")
 
+        if openset:
+            ys, xs = zip(*openset)
+            ax.scatter(xs, H - 1 - np.array(ys), s=8, 
+            facecolors='none', edgecolors='b', label="Open")
+
+        if path:
+            ys, xs = zip(*path)
+            ax.plot(xs, H - 1 - np.array(ys), linewidth=2, label="Path")
+
+        ax.set_title(title)
+        ax.set_xlim(-0.5, W - 0.5); ax.set_ylim(-0.5, H - 0.5)
+        ax.set_aspect('equal', adjustable='box')
+        ax.legend(loc="upper right")
+        ax.grid(False)
+        plt.tight_layout()
+        return fig, ax
+ 
     def plan(self, start, goal):
         """
         Plans the path for the given start and goal.
@@ -88,7 +125,7 @@ class AStar(Planner):
         if self.map[start] <= self.threshold or self.map[goal] <= self.threshold:
             return None
 
-        open_heap = []                                  # (f, g, node)
+        open_heap = []                                  
         heapq.heappush(open_heap, (self.heuristic(start, goal), 0.0, start))
         came_from = {}
         g_score = {start: 0.0}
@@ -113,4 +150,5 @@ class AStar(Planner):
                     f_nb = tentative_g + self.heuristic(nb, goal)
                     heapq.heappush(open_heap, (f_nb, tentative_g, nb))
         return None
+
 
