@@ -5,10 +5,11 @@
 import math
 import os
 import rclpy
-import tf2_ros
+#import tf2_ros
 
 from geometry_msgs.msg import PoseStamped, Twist, TransformStamped
 from nav_msgs.msg import Path, OccupancyGrid, Odometry
+from visualization_msgs.msg import Marker, MarkerArray
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data, QoSProfile
 from tf2_ros import Buffer, TransformListener
@@ -127,6 +128,7 @@ class NavigationExecutor(Node):
         super().__init__('executor')
         
         self.cmd_topic = '/cmd_vel'
+        self.vis_topic = '/visualization_marker_array'
         self.target_frame = 'odom'
         self.base_frame = 'base_link'
         self.goal_tol_xy = 0.15
@@ -152,6 +154,7 @@ class NavigationExecutor(Node):
         self.occ_map = None
 
         self.cmd_pub = self.create_publisher(Twist, self.cmd_topic, 10)
+        self.vis_pub = self.create_publisher(MarkerArray, self.vis_topic, 10)
         self.map_sub = self.create_subscription(OccupancyGrid, 
                                                 'map', 
                                                 self.occ_callback, 
@@ -159,6 +162,35 @@ class NavigationExecutor(Node):
 
         self.goal_index: int = 0
         self.timer = self.create_timer(1.0 / self.control_rate, self.control_loop)
+        
+    def pub_path_vis(self, path):
+        marker_array = MarkerArray()        
+    
+        i = 0
+        for node in path.poses:
+            marker = Marker()
+            marker.header.frame_id = self.base_frame
+            marker.header.stamp = self.get_clock().now().to_msg()
+            
+            marker.type = marker.CUBE
+            marker.id = i
+            marker.action = marker.ADD
+            
+            marker.scale.x = 0.2
+            marker.scale.y = 0.2
+            marker.scale.z = 0.2
+            
+            marker.color.r = 1.0
+            marker.color.g = 0.0
+            marker.color.b = 0.0
+            marker.color.a = 1.0
+            
+            marker.pose.position.x = node[0]
+            marker.pose.position.y = node[1]
+            
+            marker_array.append(marker)
+            i += 1
+        self.vis_pub.publish(marker_array)
 
 
     def path_cb(self, msg: Path):
@@ -248,6 +280,9 @@ class NavigationExecutor(Node):
         cmd.linear.x = max(min(v_cmd, self.v_max), -self.v_max)
         cmd.angular.z = max(min(w_cmd, self.w_max), -self.w_max)
         self.cmd_pub.publish(cmd)
+        
+        test = [[0., 0.], [1., 0.], [1., 1.]]
+        self.pub_path_vis(test)
 
 def main():
     #os.system('ros2 run cartographer_ros cartographer_node')
