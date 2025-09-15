@@ -10,7 +10,7 @@ from tf2_ros import Buffer, TransformListener
 from abc import ABC, abstractmethod
 import heapq
 from geometry_msgs.msg import PoseWithCovarianceStamped
-
+from visualization_msgs.msg import Marker, MarkerArray
 class GridCommon:
     def __init__(self, node, occ_threshold=50, connect8=True):
         self.node = node
@@ -200,8 +200,9 @@ class NavigationExecutor(Node):
         self.occ_map: OccupancyGrid | None = None
         self.need_replan: bool = False
         self.goal_reached = False
-
+        self.vis_topic = '/visualization_marker_array'
         self.cmd_pub = self.create_publisher(Twist, self.cmd_topic, 10)
+        self.vis_pub = self.create_publisher(MarkerArray, self.vis_topic, 10)
         self.path_pub = self.create_publisher(
             Path,
             '/planned_path',
@@ -225,6 +226,37 @@ class NavigationExecutor(Node):
         self.robot_pose_cached = None
         self.create_subscription(PoseWithCovarianceStamped, '/slam_toolbox/pose', self._pose_cb, 10)
         self.timer = self.create_timer(1.0 / self.control_rate, self.control_loop)
+
+
+
+    def pub_path_vis(self, path):
+            marker_array = MarkerArray()        
+        
+            i = 0
+            for node in path.poses:
+                marker = Marker()
+                marker.header.frame_id = 'map'
+                marker.header.stamp = self.get_clock().now().to_msg()
+                
+                marker.type = marker.CUBE
+                marker.id = i
+                marker.action = marker.ADD
+                
+                marker.scale.x = 0.05
+                marker.scale.y = 0.05
+                #marker.scale.z = 0.2
+                
+                marker.color.r = 1.0
+                marker.color.g = 0.0
+                marker.color.b = 0.0
+                marker.color.a = 1.0
+                
+                marker.pose.position.x = node.pose.position.x
+                marker.pose.position.y = node.pose.position.y
+                
+                marker_array.markers.append(marker)
+                i += 1
+            self.vis_pub.publish(marker_array)
 
     def occ_callback(self, msg: OccupancyGrid):
 
@@ -273,6 +305,21 @@ class NavigationExecutor(Node):
             self.get_logger().warn(f"TF lookup failed: {e}", throttle_duration_sec=1.0)
             return None
 
+
+    def get_robot_pose_tf(self):
+        try:
+            # Try the configured base frame; optionally fall back once to the other common one
+            for bf in (self.base_frame, 'base_footprint', 'base_link'):
+                if self.tf_buffer.can_transform(self.target_frame, bf, rclpy.time.Time(),
+                                                timeout=rclpy.duration.Duration(seconds=0.05)):
+                    tf = self.tf_buffer.lookup_transform(self.target_frame, bf, rclpy.time.Time())
+                    return transform_pose_xytheta(tf)  # (x, y, yaw)
+            self.get_logger().warn(f"TF not ready: {self.target_frame} -> {self.base_frame}", throttle_duration_sec=1.0)
+            return None
+        except Exception as e:
+            self.get_logger().warn(f"TF lookup failed: {e}", throttle_duration_sec=1.0)
+            return None
+
     def _pose_cb(self, msg: PoseWithCovarianceStamped):
         p = msg.pose.pose
         self.robot_pose_cached = (p.position.x, p.position.y, yaw_from_quat(p.orientation))
@@ -292,6 +339,8 @@ class NavigationExecutor(Node):
 
         if self.current_path is None or self.goal_index >= len(self.current_path.poses) or self.need_replan:
             path = self.planner.plan((rx, ry), (gx, gy))
+            self.pub_path_vis(path)
+            print("neuer path", path)
             if path is None or not path.poses:
                 self.get_logger().warn("Planner failed: no path (start/goal blocked or outside map)")
                 self.stop_robot()
@@ -359,6 +408,8 @@ class NavigationExecutor(Node):
 
     def stop_robot(self):
         self.cmd_pub.publish(Twist())
+
+    
 
 
 def main():
