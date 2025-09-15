@@ -21,6 +21,7 @@ setup(
     entry_points={
         'console_scripts': [
             'executor = path_planner.executor:main'
+            'A_star_test = path_planner.A_star_test:main',
         ],
     },
 )

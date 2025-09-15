@@ -191,7 +191,7 @@ class NavigationExecutor(Node):
             return None
 
     def control_loop(self):
-        self.current_path = None
+        
         if self.current_path is None:
             print("wah")
             self.cmd_pub.destroy()
