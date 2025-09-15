@@ -2,6 +2,7 @@
 
 import math
 import rclpy
+import time
 from geometry_msgs.msg import PoseStamped, Twist, TransformStamped
 from nav_msgs.msg import Path, OccupancyGrid
 from rclpy.node import Node
@@ -15,7 +16,7 @@ import cv2 as cv
 import numpy as np
 from sensor_msgs.msg import LaserScan
 from rclpy.qos import qos_profile_sensor_data
-
+import matplotlib.pyplot as plt
 
 
 class Morpher:
@@ -35,7 +36,7 @@ class Morpher:
         out.data = arr.astype(np.int8).flatten().tolist()
         return out
 
-    def _to_cv_mask(self, a, occ_thresh=50, unknown_as_occ=True):
+    def _to_cv_mask(self, a, occ_thresh=75, unknown_as_occ=True):
         if unknown_as_occ:
             a = np.where(a < 0, 100, a)
         mask = (a >= occ_thresh).astype(np.uint8) * 255
@@ -55,10 +56,15 @@ class Morpher:
     def dilate(self):
         assert self.occupancy_grid is not None, "grid is empty"
         a = self._grid_to_np(self.occupancy_grid)
-        mask = self._to_cv_mask(a, occ_thresh=50, unknown_as_occ=True)
+        print(a.shape)
+        mask = self._to_cv_mask(a, occ_thresh=50, unknown_as_occ=False)
         kernel = np.ones((self.robot_width, self.robot_width), np.uint8)
         dil = cv.dilate(mask, kernel, iterations=1)
         occ_arr = self._mask_to_occ(dil, unknown_fill=-1)
+             
+        plt.imshow(occ_arr)
+        plt.savefig("test.png")
+        plt.close()
         return self._np_to_grid(occ_arr, self.occupancy_grid)
 
 class GridCommon:
@@ -248,6 +254,7 @@ class NavigationExecutor(Node):
         self.current_path: Path | None = None
         self.goal_index: int = 0
         self.occ_map: OccupancyGrid | None = None
+        self.scan_ranges = None
         self.need_replan: bool = False
         self.goal_reached = False
         self.vis_topic = '/visualization_marker_array'
@@ -323,7 +330,7 @@ class NavigationExecutor(Node):
 
 
         first = self.occ_map is None
-        morpher_class = Morpher(msg, 10)
+        morpher_class = Morpher(msg, 4)
         msg_dilated = morpher_class.dilate()
         #print("dialated map", msg_dilated)
         self.occ_map = msg_dilated 
@@ -332,7 +339,7 @@ class NavigationExecutor(Node):
         if first:
             self.planner.set_map(msg)
         else:
-            self.planner.update_map(msg)
+            self.planner.update_map(self.occ_map)
 
         if first:
             self.get_logger().info(
@@ -391,6 +398,10 @@ class NavigationExecutor(Node):
         if self.occ_map is None:
             print("if self.occ_map is None: true")
             return
+            
+        if self.scan_ranges is None:
+            return
+            
         pose = self.get_robot_pose() or self.robot_pose_cached
         if pose is None:
             print("pose is none")
@@ -398,19 +409,20 @@ class NavigationExecutor(Node):
         rx, ry, rth = pose
 
 
+        angle_idx = 10
+
         # laser scan check
         obstacle_distance_front = min(
-            min(self.scan_ranges[0:10]),
-            min(self.scan_ranges[:-10])
+            min(self.scan_ranges[0:angle_idx]),
+            min(self.scan_ranges[-angle_idx:])
         )
-        print("laser min", obstacle_distance_front)
         if obstacle_distance_front < .16:
             self.stop_robot()
             twist = Twist()
             twist.linear.x = -0.05
             
             self.cmd_pub.publish(twist)
-            # todo sleep
+            time.sleep(2)
             self.stop_robot()
             print("\033[31mwarning: laser scan closer than 15.5cm\033[0m")
             self.need_replan = True
