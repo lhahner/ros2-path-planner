@@ -20,7 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'executor = path_planner.executor:main'
+            'executor = path_planner.executor:main',
             'A_star_test = path_planner.A_star_test:main',
         ],
     },
