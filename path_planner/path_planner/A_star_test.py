@@ -13,6 +13,10 @@ from geometry_msgs.msg import PoseWithCovarianceStamped
 from visualization_msgs.msg import Marker, MarkerArray
 import cv2 as cv
 import numpy as np
+from sensor_msgs.msg import LaserScan
+from rclpy.qos import qos_profile_sensor_data
+
+
 
 class Morpher:
     def __init__(self, occupancy_grid, robot_width):
@@ -269,40 +273,48 @@ class NavigationExecutor(Node):
                 depth=5
             )
         )
+        self.scan_sub = self.create_subscription(
+            LaserScan,
+            'scan',
+            self.scan_callback,
+            qos_profile=qos_profile_sensor_data)
         self.robot_pose_cached = None
         self.create_subscription(PoseWithCovarianceStamped, '/slam_toolbox/pose', self._pose_cb, 10)
         self.timer = self.create_timer(1.0 / self.control_rate, self.control_loop)
 
-
+    def scan_callback(self, msg):
+        self.scan_ranges = msg.ranges
+        self.has_scan_received = True
 
     def pub_path_vis(self, path):
-            marker_array = MarkerArray()        
-        
-            i = 0
-            for node in path.poses:
-                marker = Marker()
-                marker.header.frame_id = 'map'
-                marker.header.stamp = self.get_clock().now().to_msg()
-                
-                marker.type = marker.CUBE
-                marker.id = i
-                marker.action = marker.ADD
-                
-                marker.scale.x = 0.05
-                marker.scale.y = 0.05
-                #marker.scale.z = 0.2
-                
-                marker.color.r = 1.0
-                marker.color.g = 0.0
-                marker.color.b = 0.0
-                marker.color.a = 1.0
-                
-                marker.pose.position.x = node.pose.position.x
-                marker.pose.position.y = node.pose.position.y
-                
-                marker_array.markers.append(marker)
-                i += 1
-            self.vis_pub.publish(marker_array)
+        if path is None: return
+        marker_array = MarkerArray()        
+
+        i = 0
+        for node in path.poses:
+            marker = Marker()
+            marker.header.frame_id = 'map'
+            marker.header.stamp = self.get_clock().now().to_msg()
+            
+            marker.type = marker.CUBE
+            marker.id = i
+            marker.action = marker.ADD
+            
+            marker.scale.x = 0.05
+            marker.scale.y = 0.05
+            #marker.scale.z = 0.2
+            
+            marker.color.r = 1.0
+            marker.color.g = 0.0
+            marker.color.b = 0.0
+            marker.color.a = 1.0
+            
+            marker.pose.position.x = node.pose.position.x
+            marker.pose.position.y = node.pose.position.y
+            
+            marker_array.markers.append(marker)
+            i += 1
+        self.vis_pub.publish(marker_array)
 
     def occ_callback(self, msg: OccupancyGrid):
 
@@ -313,7 +325,7 @@ class NavigationExecutor(Node):
         first = self.occ_map is None
         morpher_class = Morpher(msg, 10)
         msg_dilated = morpher_class.dilate()
-        print("dialated map", msg_dilated)
+        #print("dialated map", msg_dilated)
         self.occ_map = msg_dilated 
 
 
@@ -385,13 +397,36 @@ class NavigationExecutor(Node):
             return
         rx, ry, rth = pose
 
+
+        # laser scan check
+        obstacle_distance_front = min(
+            min(self.scan_ranges[0:10]),
+            min(self.scan_ranges[:-10])
+        )
+        print("laser min", obstacle_distance_front)
+        if obstacle_distance_front < .16:
+            self.stop_robot()
+            twist = Twist()
+            twist.linear.x = -0.05
+            
+            self.cmd_pub.publish(twist)
+            # todo sleep
+            self.stop_robot()
+            print("\033[31mwarning: laser scan closer than 15.5cm\033[0m")
+            self.need_replan = True
+
+
+
         gx = self.get_parameter('goal_x').get_parameter_value().double_value
         gy = self.get_parameter('goal_y').get_parameter_value().double_value
+
+
+
 
         if self.current_path is None or self.goal_index >= len(self.current_path.poses) or self.need_replan:
             path = self.planner.plan((rx, ry), (gx, gy))
             self.pub_path_vis(path)
-            print("neuer path", path)
+            #print("neuer path", path)
             if path is None or not path.poses:
                 self.get_logger().warn("Planner failed: no path (start/goal blocked or outside map)")
                 self.stop_robot()
@@ -409,7 +444,7 @@ class NavigationExecutor(Node):
                 self.goal_reached = True
                 self.current_path = None
                 self.stop_robot()
-                self.get_logger().info("Goal reached. Stopping.")
+                self.get_logger().info("Goal reached. Stopping.") 
             return
             
         poses = self.current_path.poses
