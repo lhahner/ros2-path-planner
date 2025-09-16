@@ -1,5 +1,3 @@
-#from nav_msgs.msg import OccupancyGrid
-
 from .imports import *
 
 class GridCommon:
