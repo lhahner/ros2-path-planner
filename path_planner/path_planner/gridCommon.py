@@ -1,3 +1,7 @@
+#from nav_msgs.msg import OccupancyGrid
+
+from .imports import *
+
 class GridCommon:
     def __init__(self, node, occ_threshold=50, connect8=True):
         self.node = node
