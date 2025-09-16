@@ -325,7 +325,9 @@ class NavigationExecutor(Node):
             
             marker_array.markers.append(marker)
             i += 1
-        # goal position (large green sphere)
+
+        # goal position (green sphere)
+
         gx = self.get_parameter('goal_x').get_parameter_value().double_value
         gy = self.get_parameter('goal_y').get_parameter_value().double_value
 
