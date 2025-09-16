@@ -321,6 +321,28 @@ class NavigationExecutor(Node):
             
             marker_array.markers.append(marker)
             i += 1
+        # goal position (green sphere)
+        gx = self.get_parameter('goal_x').get_parameter_value().double_value
+        gy = self.get_parameter('goal_y').get_parameter_value().double_value
+
+        goal = Marker()
+        goal.header.frame_id = 'map'
+        now = self.get_clock().now().to_msg()
+        goal.header.stamp = now
+        goal.type = goal.SPHERE
+        goal.id = 100000  # unique id
+        goal.action = goal.ADD
+        goal.scale.x = 0.10
+        goal.scale.y = 0.10
+        
+        goal.color.r = 0.0
+        goal.color.g = 1.0
+        goal.color.b = 0.0
+        goal.color.a = 1.0
+        goal.pose.position.x = gx
+        goal.pose.position.y = gy
+        marker_array.markers.append(goal)
+        
         self.vis_pub.publish(marker_array)
 
     def occ_callback(self, msg: OccupancyGrid):
