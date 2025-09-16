@@ -1,4 +1,4 @@
-# ros2 run nav_exec A_star_test --ros-args   -p goal_x:=1.0   -p goal_y:=-.5   -p target_frame:=map   -p base_frame:=base_link
+# ros2 run path_planner A_star_test --ros-args   -p goal_x:=1.0   -p goal_y:=-.5   -p target_frame:=map   -p base_frame:=base_link
 
 import math
 import rclpy
@@ -16,7 +16,7 @@ import cv2 as cv
 import numpy as np
 from sensor_msgs.msg import LaserScan
 from rclpy.qos import qos_profile_sensor_data
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 
 
 class Morpher:
@@ -62,9 +62,9 @@ class Morpher:
         dil = cv.dilate(mask, kernel, iterations=1)
         occ_arr = self._mask_to_occ(dil, unknown_fill=-1)
              
-        plt.imshow(occ_arr)
-        plt.savefig("test.png")
-        plt.close()
+        #plt.imshow(occ_arr)
+        #plt.savefig("test.png")
+       # plt.close()
         return self._np_to_grid(occ_arr, self.occupancy_grid)
 
 class GridCommon:
@@ -234,6 +234,10 @@ class AStar(GridCommon, Planner):
 class NavigationExecutor(Node):
     def __init__(self):
         super().__init__('executor')
+        self.declare_parameter('robot_radius', 0.09)
+        self.robot_radius = self.get_parameter('robot_radius').value
+        self.robot_radius_px = None   
+
         self.declare_parameter('goal_x', 1.0)
         self.declare_parameter('goal_y', 0.0)
         self.declare_parameter('target_frame', 'map')
@@ -321,25 +325,51 @@ class NavigationExecutor(Node):
             
             marker_array.markers.append(marker)
             i += 1
+        # goal position (large green sphere)
+        gx = self.get_parameter('goal_x').get_parameter_value().double_value
+        gy = self.get_parameter('goal_y').get_parameter_value().double_value
+
+        goal = Marker()
+        goal.header.frame_id = 'map'
+        now = self.get_clock().now().to_msg()
+        goal.header.stamp = now
+        goal.type = goal.SPHERE
+        goal.id = 100000  # unique id
+        goal.action = goal.ADD
+        goal.scale.x = 0.10
+        goal.scale.y = 0.10
+        
+        goal.color.r = 0.0
+        goal.color.g = 1.0
+        goal.color.b = 0.0
+        goal.color.a = 1.0
+        goal.pose.position.x = gx
+        goal.pose.position.y = gy
+        marker_array.markers.append(goal)
+
+        
         self.vis_pub.publish(marker_array)
 
     def occ_callback(self, msg: OccupancyGrid):
 
         if self.goal_reached:
             return
-
+        res = msg.info.resolution
+        radius_px = 4#max(1, int(math.ceil(self.robot_radius / res)))
 
         first = self.occ_map is None
-        morpher_class = Morpher(msg, 4)
+        morpher_class = Morpher(msg, radius_px)
         msg_dilated = morpher_class.dilate()
         #print("dialated map", msg_dilated)
         self.occ_map = msg_dilated 
+        self.robot_radius_px = radius_px
 
 
         if first:
             self.planner.set_map(msg)
         else:
             self.planner.update_map(self.occ_map)
+
 
         if first:
             self.get_logger().info(
@@ -375,20 +405,6 @@ class NavigationExecutor(Node):
             self.get_logger().warn(f"TF lookup failed: {e}", throttle_duration_sec=1.0)
             return None
 
-
-    def get_robot_pose_tf(self):
-        try:
-            # Try the configured base frame; optionally fall back once to the other common one
-            for bf in (self.base_frame, 'base_footprint', 'base_link'):
-                if self.tf_buffer.can_transform(self.target_frame, bf, rclpy.time.Time(),
-                                                timeout=rclpy.duration.Duration(seconds=0.05)):
-                    tf = self.tf_buffer.lookup_transform(self.target_frame, bf, rclpy.time.Time())
-                    return transform_pose_xytheta(tf)  # (x, y, yaw)
-            self.get_logger().warn(f"TF not ready: {self.target_frame} -> {self.base_frame}", throttle_duration_sec=1.0)
-            return None
-        except Exception as e:
-            self.get_logger().warn(f"TF lookup failed: {e}", throttle_duration_sec=1.0)
-            return None
 
     def _pose_cb(self, msg: PoseWithCovarianceStamped):
         p = msg.pose.pose
@@ -452,6 +468,14 @@ class NavigationExecutor(Node):
 
 
         if math.hypot(rx - gx, ry - gy) <= self.goal_tol_xy:
+            """### am ende goal angle matchen###
+            desired_yaw = math.atan2(gy-ry, gx-rx)
+            dth = (desired_yaw - rth + math.pi) % (2*math.pi) - math.pi
+            if abs(dth) > math.radians(10):  
+                cmd = Twist()
+                cmd.angular.z = max(min(dth, self.w_max), -self.w_max)
+                self.cmd_pub.publish(cmd); return
+            #######################################"""
             if not self.goal_reached:
                 self.goal_reached = True
                 self.current_path = None
