@@ -1,4 +1,4 @@
-# ros2 run path_planner A_star_test --ros-args   -p goal_x:=1.0   -p goal_y:=-.5   -p target_frame:=map   -p base_frame:=base_link
+# ros2 run path_planner executor --ros-args -p goal_x:=1.0 -p goal_y:=-.5
 
 from .imports import *
 
@@ -6,6 +6,7 @@ def yaw_from_quat(q):
     siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
     cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
     return math.atan2(siny_cosp, cosy_cosp)
+
 
 def transform_pose_xytheta(tf: TransformStamped):
     t = tf.transform.translation
@@ -16,22 +17,23 @@ def transform_pose_xytheta(tf: TransformStamped):
 class NavigationExecutor(Node):
     def __init__(self):
         super().__init__('executor')
-        self.declare_parameter('robot_radius', 0.09)
-        self.robot_radius = self.get_parameter('robot_radius').value
         self.robot_radius_px = None   
 
         self.declare_parameter('goal_x', 1.0)
         self.declare_parameter('goal_y', 0.0)
-        self.declare_parameter('target_frame', 'map')
-        self.declare_parameter('base_frame', 'base_link')
 
         self.cmd_topic = '/cmd_vel'
-        self.target_frame = self.get_parameter('target_frame').get_parameter_value().string_value
-        self.base_frame = self.get_parameter('base_frame').get_parameter_value().string_value
+        self.target_frame = 'map'
+        self.base_frame = 'base_link'
         self.goal_tol_xy = 0.15
         self.v_max = 0.15
         self.w_max = 0.8
         self.control_rate = 20.0
+        
+        self.rx, self.ry, self.rth = 0., 0., 0.
+        self.old_rx, self.old_ry = 100., 100.
+        self.stuck_count = 0
+        self.prev_stuck = False
 
         self.tf_buffer: Buffer = Buffer(cache_time=rclpy.duration.Duration(seconds=10.0))
         self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
@@ -43,6 +45,7 @@ class NavigationExecutor(Node):
         self.occ_map_full_dilated: OccupancyGrid | None = None
         self.occ_map_plan: OccupancyGrid | None = None
         self.scan_ranges = None
+        self.twist = None
         self.need_replan: bool = False
         self.goal_reached = False
         self.vis_topic = '/visualization_marker_array'
@@ -73,7 +76,15 @@ class NavigationExecutor(Node):
             'scan',
             self.scan_callback,
             qos_profile=qos_profile_sensor_data)
+            
+        self.cmd_sub = self.create_subscription(
+            Twist,
+            '/cmd_vel',
+            self.cmd_callback,
+            qos_profile=qos_profile_sensor_data
+        )
         self.robot_pose_cached = None
+
         self.create_subscription(PoseWithCovarianceStamped, '/slam_toolbox/pose', self._pose_cb, 10)
 
 
@@ -91,11 +102,41 @@ class NavigationExecutor(Node):
 
     def scan_callback(self, msg):
         self.scan_ranges = msg.ranges
+
         
+    def cmd_callback(self, msg):
+        self.twist = msg
+
 
     def pub_path_vis(self, path):
-        if path is None: return
-        marker_array = MarkerArray()        
+        # goal position (green sphere)
+        marker_array = MarkerArray() 
+        gx = self.get_parameter('goal_x').get_parameter_value().double_value
+        gy = self.get_parameter('goal_y').get_parameter_value().double_value
+        
+        print(gx, gy)
+
+        goal = Marker()
+        goal.header.frame_id = 'map'
+        goal.header.stamp = self.get_clock().now().to_msg()
+        goal.type = goal.SPHERE
+        goal.id = 100000  # unique id
+        goal.action = goal.ADD
+        goal.scale.x = 0.10
+        goal.scale.y = 0.10
+        goal.scale.z = 0.1
+        
+        goal.color.r = 0.0
+        goal.color.g = 1.0
+        goal.color.b = 0.0
+        goal.color.a = 1.0
+        goal.pose.position.x = gx
+        goal.pose.position.y = gy
+        marker_array.markers.append(goal)
+
+        if path is None: 
+            self.vis_pub.publish(marker_array)
+            return       
 
         i = 0
         for node in path.poses:
@@ -109,7 +150,7 @@ class NavigationExecutor(Node):
             
             marker.scale.x = 0.05
             marker.scale.y = 0.05
-            #marker.scale.z = 0.2
+            marker.scale.z = 0.05
             
             marker.color.r = 1.0
             marker.color.g = 0.0
@@ -120,31 +161,7 @@ class NavigationExecutor(Node):
             marker.pose.position.y = node.pose.position.y
             
             marker_array.markers.append(marker)
-            i += 1
-
-        # goal position (green sphere)
-
-        gx = self.get_parameter('goal_x').get_parameter_value().double_value
-        gy = self.get_parameter('goal_y').get_parameter_value().double_value
-
-        goal = Marker()
-        goal.header.frame_id = 'map'
-        now = self.get_clock().now().to_msg()
-        goal.header.stamp = now
-        goal.type = goal.SPHERE
-        goal.id = 100000  # unique id
-        goal.action = goal.ADD
-        goal.scale.x = 0.10
-        goal.scale.y = 0.10
-        
-        goal.color.r = 0.0
-        goal.color.g = 1.0
-        goal.color.b = 0.0
-        goal.color.a = 1.0
-        goal.pose.position.x = gx
-        goal.pose.position.y = gy
-        marker_array.markers.append(goal)
-
+            i += 1        
         
         self.vis_pub.publish(marker_array)
 
@@ -157,13 +174,18 @@ class NavigationExecutor(Node):
             return
 
         res = msg.info.resolution
+
         radius_px = 5  # max(1, int(math.ceil(self.robot_radius / res)))
 
         first = self.occ_map is None
         morpher_class = Morpher(msg, radius_px)
         msg_dilated = morpher_class.dilate()
 
-        # --- Build planning variant that removes ONLY dilation around current start ---
+        self.occ_map = msg_dilated 
+        self.robot_radius_px = 4
+
+
+        #  remove ONLY dilation around current start
         msg_for_plan = OccupancyGrid()
         msg_for_plan.header = msg_dilated.header
         msg_for_plan.info = msg_dilated.info
@@ -193,7 +215,7 @@ class NavigationExecutor(Node):
 
                 # if raw is free and dilation blocked the start, carve a small bubble
                 if (raw_occ >= 0 and raw_occ < occ_thr) and (dil_occ >= occ_thr): # cells that are free in raw map but got filled only by dilation
-                    bubble_r = max(1, int(self.robot_radius_px or 1)) # define bounding box of size 2 * bubble_r + 1, fallback: 1
+                    bubble_r = max(1, int(self.robot_radius_px or 4)) # define bounding box of size 2 * bubble_r + 1, fallback: 4
                     r2 = bubble_r * bubble_r
                     ymin = max(0, my - bubble_r)
                     ymax = min(h, my + bubble_r + 1)
@@ -210,7 +232,7 @@ class NavigationExecutor(Node):
                                 (msg_for_plan.data[idx(xx, yy)] >= occ_thr):
                                     msg_for_plan.data[idx(xx, yy)] = 0
 
-        # Save maps
+        
         self.occ_map_full_dilated = msg_dilated
         self.occ_map_plan = msg_for_plan
         self.occ_map = self.occ_map_full_dilated
@@ -231,8 +253,8 @@ class NavigationExecutor(Node):
         if self.current_path:
             for i in range(self.goal_index, len(self.current_path.poses)):
                 p = self.current_path.poses[i].pose.position
-                mc = self.planner.world_to_map(p.x, p.y)
-                if mc is None or not self.planner.is_free(mc[0], mc[1]):
+                map_coords = self.planner.world_to_map(p.x, p.y)
+                if map_coords is None or not self.planner.is_free(map_coords[0], map_coords[1]):
                     print("\033[31mwarning: next waypoints not free -> replan\033[0m")
                     self.need_replan = True
                     self.replan_count += 1
@@ -349,10 +371,12 @@ class NavigationExecutor(Node):
             return
             
         pose = self.get_robot_pose() or self.robot_pose_cached
+        
         if pose is None:
             print("pose is none")
             return
-        rx, ry, rth = pose
+            
+        self.rx, self.ry, self.rth = pose
 
         if self._last_progress_pose is None:
             self._last_progress_pose = (rx, ry)
@@ -375,30 +399,53 @@ class NavigationExecutor(Node):
             return
 
 
-        angle_idx = 10
+        angle_idx = 20
 
         # laser scan check
         obstacle_distance_front = min(
             min(self.scan_ranges[0:angle_idx]),
             min(self.scan_ranges[-angle_idx:])
         )
+
         if obstacle_distance_front < .16 and not self.escape_active:
-            self.stop_robot()
-            twist = Twist()
-            twist.linear.x = -0.05
-            
-            self.cmd_pub.publish(twist)
-            time.sleep(2)
-            self.stop_robot()
+
+        self.stop_robot()
+        sm = self.world_to_map(self.rx, self.ry)
+        if !self.is_free(*sm):
+        	print("currently inside walls")
+        if obstacle_distance_front < .16 or !self.is_free(*sm):
+            print("\033[31mwarning: laser scan closer than 15.5cm\033[0m")
+
             print("\033[31mwarning: laser scan closer than 15.5cm\033[0m")
             self.need_replan = True
             self.replan_count += 1
 
+            
+        if self.twist is not None:
+            if self.twist.linear.x > 0.1 and math.hypot(self.old_rx - self.rx, self.old_ry - self.ry) < 0.00001:
+                print("possibly stuck")
+                self.stuck_count += 1
+                self.prev_stuck = True
+            else:
+                self.prev_stuck = False
+        self.old_rx = self.rx
+        self.old_ry = self.ry
+        
+        if self.prev_stuck:
+            if self.stuck_count > 3:
+                self.stop_robot()
+                twist = Twist()
+                twist.linear.x = -0.05                                
+                self.cmd_pub.publish(twist)
+                time.sleep(2)
+                self.stop_robot()
 
+                self.need_replan = True
+        else:
+            self.stuck_count = 0
 
         gx = self.get_parameter('goal_x').get_parameter_value().double_value
         gy = self.get_parameter('goal_y').get_parameter_value().double_value
-
 
 
 
@@ -408,7 +455,7 @@ class NavigationExecutor(Node):
             # stuck in replanning loop
             if self.replan_count > self.replan_stuck_limit and not self.escape_active:
                 print("\033[31mstuck in replan loop: drive to next free cell and replan\033[0m")
-                sm = self.planner.world_to_map(rx, ry)
+                sm = self.planner.world_to_map(self.rx, self.ry)
                 nf = self._nearest_free_cell(sm[0], sm[1], max_r=12) if sm is not None else None
                 if nf is not None:
                     self._start_escape_to_cell(nf)
@@ -424,11 +471,12 @@ class NavigationExecutor(Node):
             if hasattr(self, "occ_map_plan") and self.occ_map_plan is not None:
                 self.planner.update_map(self.occ_map_plan)
 
-            path = self.planner.plan((rx, ry), (gx, gy))
+            path = self.planner.plan((self.rx, self.ry), (gx, gy))
 
             # restore full dilation for driving
             if hasattr(self, "occ_map_full_dilated") and self.occ_map_full_dilated is not None:
                 self.planner.update_map(self.occ_map_full_dilated)
+
 
             self.pub_path_vis(path)
             if path is None or not path.poses:
@@ -457,7 +505,8 @@ class NavigationExecutor(Node):
 
 
 
-        if math.hypot(rx - gx, ry - gy) <= self.goal_tol_xy:
+        if math.hypot(self.rx - gx, self.ry - gy) <= self.goal_tol_xy:
+
             """### am ende goal angle matchen###
             desired_yaw = math.atan2(gy-ry, gx-rx)
             dth = (desired_yaw - rth + math.pi) % (2*math.pi) - math.pi
@@ -475,7 +524,7 @@ class NavigationExecutor(Node):
             return
             
         poses = self.current_path.poses
-        sm = self.planner.world_to_map(rx, ry)
+        sm = self.planner.world_to_map(self.rx, self.ry)
         gm = self.planner.world_to_map(gx, gy)
         self.get_logger().info(
             f"sm={sm} gm={gm} "
@@ -490,16 +539,16 @@ class NavigationExecutor(Node):
             return
 
         next_wp = poses[self.goal_index].pose.position
-        mc = self.planner.world_to_map(next_wp.x, next_wp.y)
-        if mc is None or not self.planner.is_free(mc[0], mc[1]):
+
+        map_coords = self.planner.world_to_map(next_wp.x, next_wp.y)
+        if map_coords is None or not self.planner.is_free(map_coords[0], map_coords[1]):
             if not self.escape_active:
                 self.need_replan = True
-                self.replan_count += 1 
+                self.replan_count += 1
+
             return
 
-        tx = next_wp.x
-        ty = next_wp.y
-        dx, dy = tx - rx, ty - ry
+        dx, dy = next_wp.x - self.rx, next_wp.y - self.ry
         dist_wp = math.hypot(dx, dy)
 
         if dist_wp <= self.goal_tol_xy:
@@ -507,7 +556,7 @@ class NavigationExecutor(Node):
             return
 
         desired_yaw = math.atan2(dy, dx)
-        dth = (desired_yaw - rth + math.pi) % (2 * math.pi) - math.pi
+        dth = (desired_yaw - self.rth + math.pi) % (2 * math.pi) - math.pi
         heading_scale = max(0.0, math.cos(dth))
         v_cmd = min(self.v_max, dist_wp) * heading_scale
         w_cmd = max(min(dth, self.w_max), -self.w_max)

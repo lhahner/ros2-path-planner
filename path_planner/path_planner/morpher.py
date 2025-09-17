@@ -17,7 +17,7 @@ class Morpher:
         out.data = arr.astype(np.int8).flatten().tolist()
         return out
 
-    def _to_cv_mask(self, a, occ_thresh=75, unknown_as_occ=True):
+    def _to_cv_mask(self, a, occ_thresh=75, unknown_as_occ=False):
         if unknown_as_occ:
             a = np.where(a < 0, 100, a)
         mask = (a >= occ_thresh).astype(np.uint8) * 255
@@ -37,13 +37,13 @@ class Morpher:
     def dilate(self):
         assert self.occupancy_grid is not None, "grid is empty"
         a = self._grid_to_np(self.occupancy_grid)
-        print(a.shape)
-        mask = self._to_cv_mask(a, occ_thresh=50, unknown_as_occ=False)
+        mask = self._to_cv_mask(a, occ_thresh=66, unknown_as_occ=False)
         kernel = np.ones((self.robot_width, self.robot_width), np.uint8)
         dil = cv.dilate(mask, kernel, iterations=1)
         occ_arr = self._mask_to_occ(dil, unknown_fill=-1)
              
-        #plt.imshow(occ_arr)
-        #plt.savefig("test.png")
-       # plt.close()
+        plt.imshow(occ_arr, origin='lower')
+        plt.savefig("test.png")
+        plt.close()
+        
         return self._np_to_grid(occ_arr, self.occupancy_grid)
