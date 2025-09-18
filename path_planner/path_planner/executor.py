@@ -95,8 +95,51 @@ class NavigationExecutor(Node):
         self.backoff_linear = 0.0
         self.backoff_angular = 0.0
 
+        # recovery state
+        self.recovery_mode = 'none'          # 'none' | 'backoff' | 'reorient'
+        self.recovery_deadline = None
+        self.reorient_deadline = None
+        self.reorient_target_yaw = None
+
+        # knobs
+        self.backoff_sec = 1.5               
+        self.backoff_linear = -0.06          
+        self.backoff_angular = 0.0
+
+        self.reorient_max_sec = 2.5          # max time allowed to re-orient
+        self.reorient_yaw_tol = math.radians(12.0)  # done when |yaw error| < 12°
+        self.reorient_w_max = 0.8            # max turn rate during reorientation
+
+        self.stop_dist = 0.16
+
 
         self.timer = self.create_timer(1.0 / self.control_rate, self.control_loop)
+    def _angle_normalize(self, a):
+        return (a + math.pi) % (2.0 * math.pi) - math.pi
+
+    def _avg_heading_to_next_k(self, k=3):
+        """Average **direction** (unit vector) from current pose to next k waypoints."""
+        if self.current_path is None or not self.current_path.poses:
+            return None
+        i0 = max(self.goal_index, 0)
+        i1 = min(len(self.current_path.poses), i0 + k)
+
+        sx, sy = 0.0, 0.0
+        count = 0
+        for i in range(i0, i1):
+            wp = self.current_path.poses[i].pose.position
+            dx = wp.x - self.rx
+            dy = wp.y - self.ry
+            n = math.hypot(dx, dy)
+            if n > 1e-6:
+                sx += dx / n
+                sy += dy / n
+                count += 1
+
+        if count == 0:
+            return None
+        # average unit vector -> heading
+        return math.atan2(sy, sx)
 
     def scan_callback(self, msg):
         self.scan_ranges = msg.ranges
@@ -173,7 +216,13 @@ class NavigationExecutor(Node):
         morpher_class = Morpher(msg, self.robot_radius_px)
         msg_dilated = morpher_class.dilate()
         self.occ_map = msg_dilated 
-        
+        w, h = msg.info.width, msg.info.height
+        raw_map = [list(msg.data[i*w:(i+1)*w]) for i in range(h)]
+
+        dw, dh = msg_dilated.info.width, msg_dilated.info.height
+        dilated_map = [list(msg_dilated.data[i*dw:(i+1)*dw]) for i in range(dh)]
+
+        save_map_morphology(raw_map, dilated_map)
 
 
         if first:
@@ -222,6 +271,49 @@ class NavigationExecutor(Node):
         self.robot_pose_cached = (p.position.x, p.position.y, yaw_from_quat(p.orientation))
 
     def control_loop(self):
+
+        ############ recovery ###################
+        now = self.get_clock().now()
+
+        if self.recovery_mode == 'backoff':
+            if now < self.recovery_deadline:
+                cmd = Twist()
+                cmd.linear.x  = self.backoff_linear
+                cmd.angular.z = self.backoff_angular
+                self.cmd_pub.publish(cmd)
+                return
+            else:
+                self.stop_robot()
+
+                # compute desired yaw toward average of next 3 nodes
+                tgt = self._avg_heading_to_next_k(k=3)
+                if tgt is None:
+                    self.recovery_mode = 'none'
+                    return
+
+                self.reorient_target_yaw = tgt
+                self.reorient_deadline = now + rclpy.duration.Duration(seconds=self.reorient_max_sec)
+                self.recovery_mode = 'reorient'
+
+        if self.recovery_mode == 'reorient':
+            rx, ry, rth = self.rx, self.ry, self.rth
+            dth = self._angle_normalize(self.reorient_target_yaw - rth)
+
+            if abs(dth) <= self.reorient_yaw_tol or now >= self.reorient_deadline:
+                self.stop_robot()
+                self.recovery_mode = 'none'
+                self.need_replan = True  # try a fresh plan after turning
+                return
+            else:
+                cmd = Twist()
+                kP = 1.0
+                cmd.angular.z = max(-self.reorient_w_max, min(self.reorient_w_max, kP * dth))
+                cmd.linear.x = 0.0
+                self.cmd_pub.publish(cmd)
+                return
+        #################################################################################
+
+
         if self.occ_map is None:
             print("if self.occ_map is None: true")
             return
@@ -259,15 +351,18 @@ class NavigationExecutor(Node):
         sm = self.planner.world_to_map(self.rx, self.ry)
         if not self.planner.is_free(*sm):
         	print("currently inside walls")
-        if obstacle_distance_front < .16 or not self.planner.is_free(*sm):
-            print("\033[31mwarning: laser scan closer than 15.5cm\033[0m")
-            # backward drive geht nicht
-            dur = rclpy.duration.Duration(seconds=2.5)
-            self.backoff_until = self.get_clock().now() + dur
-            self.backoff_linear = -0.06
-            self.backoff_angular = 0.0
+        if obstacle_distance_front < self.stop_dist or not self.planner.is_free(*sm):
+            self.recovery_mode = 'backoff'
+            self.recovery_deadline = self.get_clock().now() + rclpy.duration.Duration(seconds=self.backoff_sec)
             self.need_replan = True
             self.replan_count += 1
+
+            cmd = Twist()
+            cmd.linear.x  = self.backoff_linear
+            cmd.angular.z = self.backoff_angular
+            self.cmd_pub.publish(cmd)
+            return
+
             
         if self.twist is not None:
             if self.twist.linear.x > 0.1 and math.hypot(self.old_rx - self.rx, self.old_ry - self.ry) < 0.00001:
@@ -372,6 +467,60 @@ class NavigationExecutor(Node):
 
     def stop_robot(self):
         self.cmd_pub.publish(Twist())
+def save_map_morphology(raw_map, dilated_map, filename=None):
+    import os, time, errno
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    def to_img(grid):
+        g = np.asarray(grid, dtype=np.int16)
+
+        unknown = (g == -1) | (g == 255)
+        free    = (g == 0) | ((g >= 0) & (g < 50))
+        occ     = (g >= 50) | (g == 254) | (g == 253)
+
+        img = np.empty(g.shape, dtype=np.uint8)
+        img[unknown] = 128
+        img[free]    = 255
+        img[occ & ~unknown] = 0
+        return img
+
+    if filename is None:
+        filename = "map_morphology_latest.png"
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    out_path_primary = os.path.join(script_dir, filename)
+
+    fallback_dir = os.path.join(os.path.expanduser("~"), ".ros")
+    os.makedirs(fallback_dir, exist_ok=True)
+    out_path_fallback = os.path.join(fallback_dir, filename)
+
+    def _save(to_path):
+        os.makedirs(os.path.dirname(to_path), exist_ok=True)
+        fig, axs = plt.subplots(1, 2, figsize=(8, 4))
+        for ax, (title, m) in zip(
+            axs,
+            [("Raw map", raw_map), ("Dilated map", dilated_map)]
+        ):
+            ax.imshow(to_img(m), cmap="gray", origin="lower")
+            ax.set_title(title)
+            ax.axis("off")
+        plt.tight_layout()
+        plt.savefig(to_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Map morphology saved to: {to_path}")
+        return to_path
+
+    try:
+        return _save(out_path_primary)
+    except Exception as e:
+        print(f"[save_map_morphology] Primary path failed ({out_path_primary}): {e}")
+        return _save(out_path_fallback)
+
+
+
 
 def main():
     rclpy.init()
