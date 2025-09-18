@@ -81,6 +81,21 @@ class NavigationExecutor(Node):
             qos_profile=qos_profile_sensor_data
         )
         self.robot_pose_cached = None
+
+
+
+        self.replan_count = 0
+        self.replan_stuck_limit = 5
+        self.escape_active = False
+        self._last_progress_pose = None
+        self._last_goal_index = 0
+        self._progress_move_eps = 0.05  # meters
+        self.escape_active = False
+        self.backoff_until = None
+        self.backoff_linear = 0.0
+        self.backoff_angular = 0.0
+
+
         self.timer = self.create_timer(1.0 / self.control_rate, self.control_loop)
 
     def scan_callback(self, msg):
@@ -154,10 +169,11 @@ class NavigationExecutor(Node):
         res = msg.info.resolution
 
         first = self.occ_map is None
-        morpher_class = Morpher(msg, radius_px)
+        self.robot_radius_px = 4
+        morpher_class = Morpher(msg, self.robot_radius_px)
         msg_dilated = morpher_class.dilate()
         self.occ_map = msg_dilated 
-        self.robot_radius_px = 4
+        
 
 
         if first:
@@ -209,7 +225,17 @@ class NavigationExecutor(Node):
         if self.occ_map is None:
             print("if self.occ_map is None: true")
             return
-            
+        now = self.get_clock().now()
+        if self.backoff_until is not None:
+            if now < self.backoff_until:
+                cmd = Twist()
+                cmd.linear.x  = self.backoff_linear
+                cmd.angular.z = self.backoff_angular
+                self.cmd_pub.publish(cmd)   
+                return                      # skip planning while backing up
+            else:
+                self.backoff_until = None
+                self.stop_robot()
         if self.scan_ranges is None:
             return
             
@@ -230,25 +256,18 @@ class NavigationExecutor(Node):
             min(self.scan_ranges[-angle_idx:])
         )
         
-        sm = self.world_to_map(self.rx, self.ry)
-        if !self.is_free(*sm):
+        sm = self.planner.world_to_map(self.rx, self.ry)
+        if not self.planner.is_free(*sm):
         	print("currently inside walls")
-        if obstacle_distance_front < .16 or !self.is_free(*sm):
+        if obstacle_distance_front < .16 or not self.planner.is_free(*sm):
             print("\033[31mwarning: laser scan closer than 15.5cm\033[0m")
-            self.stop_robot()
-            twist = Twist()
-            rand = np.random.rand(1)
-            if rand < 0.33:
-                twist.linear.x = -0.05
-            elif rand < 0.66:
-                twist.angular.z = -0.2
-            else:
-                twist.angular.z = 0.2            
-            self.cmd_pub.publish(twist)
-            time.sleep(2)
-            self.stop_robot()
-
+            # backward drive geht nicht
+            dur = rclpy.duration.Duration(seconds=2.5)
+            self.backoff_until = self.get_clock().now() + dur
+            self.backoff_linear = -0.06
+            self.backoff_angular = 0.0
             self.need_replan = True
+            self.replan_count += 1
             
         if self.twist is not None:
             if self.twist.linear.x > 0.1 and math.hypot(self.old_rx - self.rx, self.old_ry - self.ry) < 0.00001:
