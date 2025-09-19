@@ -113,6 +113,12 @@ class NavigationExecutor(Node):
         self.stop_dist = 0.16
 
 
+        self.blocked_streak = 0
+        self.blocked_streak_thresh = 3      # how many consecutive frames before acting
+        self.lookahead_skip = 4             # how many waypoints to probe ahead for a free one
+        self.replan_cooldown = 0.7          # seconds
+        self.next_allowed_replan = self.get_clock().now()
+
         self.timer = self.create_timer(1.0 / self.control_rate, self.control_loop)
     def _angle_normalize(self, a):
         return (a + math.pi) % (2.0 * math.pi) - math.pi
@@ -147,6 +153,40 @@ class NavigationExecutor(Node):
         
     def cmd_callback(self, msg):
         self.twist = msg
+
+    def _is_wp_free(self, wp):
+        mc = self.planner.world_to_map(wp.x, wp.y)
+        return (mc is not None) and self.planner.is_free(mc[0], mc[1])
+
+    def _first_free_ahead(self, start_idx, max_ahead):
+        poses = self.current_path.poses
+        for j in range(start_idx+1, min(len(poses), start_idx+1+max_ahead)):
+            if self._is_wp_free(poses[j].pose.position):
+                return j
+        return None
+
+    def _micro_detour_target(self, i):
+        """Try small lateral offsets around path segment (left/right) and forward step."""
+        poses = self.current_path.poses
+        if i+1 >= len(poses): return None
+        p0 = poses[i].pose.position
+        p1 = poses[i+1].pose.position
+        dx, dy = (p1.x - p0.x), (p1.y - p0.y)
+        L = math.hypot(dx, dy) or 1.0
+        nx, ny = -dy/L, dx/L  # perpendicular
+        # try a few candidate offsets
+        candidates = [
+            (p0.x + 0.15*nx, p0.y + 0.15*ny),
+            (p0.x - 0.15*nx, p0.y - 0.15*ny),
+            (p0.x + 0.25*nx, p0.y + 0.25*ny),
+            (p0.x - 0.25*nx, p0.y - 0.25*ny),
+            (p0.x + 0.20*dx/L, p0.y + 0.20*dy/L),  # tiny forward nudge
+        ]
+        for (cx, cy) in candidates:
+            mc = self.planner.world_to_map(cx, cy)
+            if (mc is not None) and self.planner.is_free(mc[0], mc[1]):
+                return cx, cy
+        return None
 
     def pub_path_vis(self, path):
         # goal position (green sphere)
