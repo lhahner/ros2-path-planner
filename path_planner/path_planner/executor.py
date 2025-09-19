@@ -263,7 +263,7 @@ class NavigationExecutor(Node):
         dw, dh = msg_dilated.info.width, msg_dilated.info.height
         dilated_map = [list(msg_dilated.data[i*dw:(i+1)*dw]) for i in range(dh)]
 
-        save_map_morphology(raw_map, dilated_map)
+        #save_map_morphology(raw_map, dilated_map)
 
 
         if first:
@@ -471,7 +471,7 @@ class NavigationExecutor(Node):
             return
 
             
-        if self.twist is not None:
+        """if self.twist is not None:
             if self.twist.linear.x > 0.1 and math.hypot(self.old_rx - self.rx, self.old_ry - self.ry) < 0.00001:
                 print("possibly stuck")
                 self.stuck_count += 1
@@ -487,12 +487,12 @@ class NavigationExecutor(Node):
                 twist = Twist()
                 twist.linear.x = -0.05                                
                 self.cmd_pub.publish(twist)
-                time.sleep(2)
+                #time.sleep(2)
                 self.stop_robot()
 
                 self.need_replan = True
         else:
-            self.stuck_count = 0
+            self.stuck_count = 0"""
 
         gx = self.get_parameter('goal_x').get_parameter_value().double_value
         gy = self.get_parameter('goal_y').get_parameter_value().double_value
@@ -509,8 +509,12 @@ class NavigationExecutor(Node):
             path = self.planner.plan((self.rx, self.ry), (gx, gy))
             self.pub_path_vis(path)
             #print("neuer path", path)
+            if not self.planner.is_free((self.rx), self.ry):
+                print("current position is occupied")
+            if not self.planner.is_free(gx, gy):
+                print("goal position is occupied")
             if path is None or not path.poses:
-                self.get_logger().warn("Planner failed: no path (start/goal blocked or outside map)")
+                #self.get_logger().warn("Planner failed: no path (start/goal blocked or outside map)")
                 self.stop_robot()
                 self.need_replan = False
                 return
@@ -537,8 +541,8 @@ class NavigationExecutor(Node):
                 self.current_path = None
                 self.stop_robot()
                 self.get_logger().info("\033[92mGoal reached. Stopping.\033[0m")
-                self.save_plan_history_plot("plan_history.png") 
-                self.save_distance_to_goal_csv("distance_to_goal_run.csv")
+                #self.save_plan_history_plot("plan_history.png") 
+                #self.save_distance_to_goal_csv("distance_to_goal_run.csv")
             return
             
         poses = self.current_path.poses

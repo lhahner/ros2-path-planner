@@ -35,7 +35,9 @@ class GridCommon:
     def map_to_world(self, mx: int, my: int):
         return (self.ox + (mx + 0.5) * self.res, self.oy + (my + 0.5) * self.res)
 
-    def is_free(self, mx: int, my: int):
+    def is_free(self, mx, my):
+        mx = int(mx)
+        my = int(my)
         idx = my * self.width + mx
         v = self.map.data[idx]
         return self._is_free_value(v)

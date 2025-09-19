@@ -31,8 +31,11 @@ class AStar(GridCommon, Planner):
         if self.map is None: return None
         sm = self.world_to_map(*start); gm = self.world_to_map(*goal)
         if sm is None or gm is None: return None
-        if not self.is_free(*sm) or not self.is_free(*gm): 
-            print("\033[31mwarning: no valid path found. start or goal position occupied\033[0m")
+        if not self.is_free(*sm):
+            print("\033[31mwarning: no valid path found. start position occupied\033[0m")
+        
+        if not self.is_free(*gm):
+            print("\033[31mwarning: no valid path found. goal position occupied\033[0m")
 
             return None
 
