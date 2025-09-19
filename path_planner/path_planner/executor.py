@@ -119,7 +119,19 @@ class NavigationExecutor(Node):
         self.replan_cooldown = 0.7          # seconds
         self.next_allowed_replan = self.get_clock().now()
 
+
+        ###visualize plan history####
+        self.plan_history = []             
+        #################################
+
+        self.dg_t = []
+        self.dg_d = []
+        self.start_time = self.get_clock().now()
+        #########################################
+
         self.timer = self.create_timer(1.0 / self.control_rate, self.control_loop)
+
+
     def _angle_normalize(self, a):
         return (a + math.pi) % (2.0 * math.pi) - math.pi
 
@@ -165,28 +177,17 @@ class NavigationExecutor(Node):
                 return j
         return None
 
-    def _micro_detour_target(self, i):
-        """Try small lateral offsets around path segment (left/right) and forward step."""
-        poses = self.current_path.poses
-        if i+1 >= len(poses): return None
-        p0 = poses[i].pose.position
-        p1 = poses[i+1].pose.position
-        dx, dy = (p1.x - p0.x), (p1.y - p0.y)
-        L = math.hypot(dx, dy) or 1.0
-        nx, ny = -dy/L, dx/L  # perpendicular
-        # try a few candidate offsets
-        candidates = [
-            (p0.x + 0.15*nx, p0.y + 0.15*ny),
-            (p0.x - 0.15*nx, p0.y - 0.15*ny),
-            (p0.x + 0.25*nx, p0.y + 0.25*ny),
-            (p0.x - 0.25*nx, p0.y - 0.25*ny),
-            (p0.x + 0.20*dx/L, p0.y + 0.20*dy/L),  # tiny forward nudge
-        ]
-        for (cx, cy) in candidates:
-            mc = self.planner.world_to_map(cx, cy)
-            if (mc is not None) and self.planner.is_free(mc[0], mc[1]):
-                return cx, cy
-        return None
+    def _path_copy(self, path: Path) -> Path:
+        p = Path()
+        p.header = path.header
+        p.poses = []
+        for ps in path.poses:
+            q = PoseStamped()
+            q.header = ps.header
+            q.pose = ps.pose
+            p.poses.append(q)
+        return p
+
 
     def pub_path_vis(self, path):
         # goal position (green sphere)
@@ -306,6 +307,69 @@ class NavigationExecutor(Node):
             return None
 
 
+    def save_plan_history_plot(self, filename="plan_history.png"):
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        if not self.plan_history or self.occ_map is None:
+            return
+
+        w, h = self.occ_map.info.width, self.occ_map.info.height
+        occ = np.asarray(self.occ_map.data, dtype=np.int16).reshape((h, w))
+        img = np.zeros_like(occ, dtype=np.uint8)
+        img[occ < 0] = 128
+        img[(occ >= 0) & (occ < 50)] = 255
+        img[occ >= 50] = 0
+
+        fig, ax = plt.subplots(figsize=(8, 8))
+        ax.imshow(
+            img, cmap="gray", origin="lower",
+            extent=[
+                self.occ_map.info.origin.position.x,
+                self.occ_map.info.origin.position.x + w*self.occ_map.info.resolution,
+                self.occ_map.info.origin.position.y,
+                self.occ_map.info.origin.position.y + h*self.occ_map.info.resolution
+            ]
+        )
+
+        def hsv_to_rgb(h, s, v):
+            if s <= 1e-9: return (v, v, v)
+            h = (h % 1.0) * 6.0
+            i0 = int(h); f = h - i0
+            p = v * (1-s); q = v*(1-s*f); t = v*(1-s*(1-f))
+            if i0==0: return (v, t, p)
+            if i0==1: return (q, v, p)
+            if i0==2: return (p, v, t)
+            if i0==3: return (p, q, v)
+            if i0==4: return (t, p, v)
+            return (v, p, q)
+
+        total = len(self.plan_history)
+        for i, path in enumerate(self.plan_history):
+            t = i / (total-1) if total > 1 else 0.0
+            h = 210/360.0; s = 0.7; v = 1.0 - 0.6*t
+            r,g,b = hsv_to_rgb(h,s,v)
+            xs = [ps.pose.position.x for ps in path.poses]
+            ys = [ps.pose.position.y for ps in path.poses]
+            ax.plot(xs, ys, color=(r,g,b), linewidth=1.5)
+
+        start = self.plan_history[0].poses[0].pose.position
+        gx = self.get_parameter('goal_x').get_parameter_value().double_value
+        gy = self.get_parameter('goal_y').get_parameter_value().double_value
+        ax.scatter(start.x, start.y, c='orange', s=50, marker='o', label="start")
+        ax.scatter(gx, gy, c='green', s=50, marker='*', label="goal")
+
+        ax.set_title("Path replanning history")
+        ax.set_aspect('equal', 'box')
+        ax.legend()
+        plt.tight_layout()
+        plt.savefig(filename, dpi=200)
+        plt.close(fig)
+        print(f"Saved replanning history plot to {filename}")
+
+
     def _pose_cb(self, msg: PoseWithCovarianceStamped):
         p = msg.pose.pose
         self.robot_pose_cached = (p.position.x, p.position.y, yaw_from_quat(p.orientation))
@@ -376,7 +440,10 @@ class NavigationExecutor(Node):
         if pose is None:
             print("pose is none")
             return
-            
+        else:
+            if self.start_time is None:
+                self.start_time = self.get_clock().now()
+
         self.rx, self.ry, self.rth = pose
 
 
@@ -430,6 +497,14 @@ class NavigationExecutor(Node):
         gx = self.get_parameter('goal_x').get_parameter_value().double_value
         gy = self.get_parameter('goal_y').get_parameter_value().double_value
 
+
+        ###########current distance to goal##############
+        t_sec = (self.get_clock().now() - self.start_time).nanoseconds * 1e-9
+        dist_goal = math.hypot(self.rx - gx, self.ry - gy)
+        self.dg_t.append(t_sec)
+        self.dg_d.append(dist_goal)
+
+
         if self.current_path is None or self.goal_index >= len(self.current_path.poses) or self.need_replan:
             path = self.planner.plan((self.rx, self.ry), (gx, gy))
             self.pub_path_vis(path)
@@ -440,6 +515,8 @@ class NavigationExecutor(Node):
                 self.need_replan = False
                 return
             self.current_path = path
+            self.plan_history.append(self._path_copy(self.current_path))
+
             self.goal_index = 0
             self.need_replan = False
             self.path_pub.publish(self.current_path)
@@ -459,7 +536,9 @@ class NavigationExecutor(Node):
                 self.goal_reached = True
                 self.current_path = None
                 self.stop_robot()
-                self.get_logger().info("Goal reached. Stopping.") 
+                self.get_logger().info("\033[92mGoal reached. Stopping.\033[0m")
+                self.save_plan_history_plot("plan_history.png") 
+                self.save_distance_to_goal_csv("distance_to_goal_run.csv")
             return
             
         poses = self.current_path.poses
@@ -505,8 +584,31 @@ class NavigationExecutor(Node):
         )
         self.cmd_pub.publish(cmd)
 
+    def save_distance_to_goal_csv(self, filename="distance_to_goal_run.csv"):
+        import csv, os
+
+        if not self.dg_t:
+            return
+
+        out_dir = os.path.join(os.path.expanduser("~"), ".ros")
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, filename)
+
+        with open(out_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["time_s", "distance_to_goal_m"])
+            for t, d in zip(self.dg_t, self.dg_d):
+                writer.writerow([t, d])
+
+        print(f"Saved distance-to-goal log to {out_path}")
+
+
+
+
     def stop_robot(self):
         self.cmd_pub.publish(Twist())
+
+
 def save_map_morphology(raw_map, dilated_map, filename=None):
     import os, time, errno
     import matplotlib
@@ -559,6 +661,7 @@ def save_map_morphology(raw_map, dilated_map, filename=None):
         print(f"[save_map_morphology] Primary path failed ({out_path_primary}): {e}")
         return _save(out_path_fallback)
 
+ 
 
 
 
